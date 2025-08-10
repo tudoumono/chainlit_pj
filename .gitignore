@@ -1,0 +1,92 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment (uv)
+.venv/
+
+# uv specific
+uv.lock
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+chat_history.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Chainlit
+.chainlit/
+.files/
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+tmp/
+temp/
+
+# Export files (generated)
+exports/
+export_*.pdf
+export_*.html
+export_*.json
+
+# Personal Vector Store IDs
+personal_vs_id.txt
+*_vs_id.txt
+
+# Test files
+test_*.py
+tests/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/
+
+# Not needed files (for cleanup)
+requirements.txt
+setup*.bat
+setup*.ps1
+setup*.sh
+run*.bat
+run*.ps1
+run*.sh
+DELETE_FILES.md

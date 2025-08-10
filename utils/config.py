@@ -1,0 +1,244 @@
+"""
+設定管理モジュール
+- .envファイルの読み書き
+- OpenAI API接続テスト
+- 設定の検証
+"""
+
+import os
+from pathlib import Path
+from typing import Dict, Optional, Tuple, List
+from dotenv import load_dotenv, set_key, find_dotenv
+import openai
+from openai import OpenAI
+import httpx
+import asyncio
+import json
+
+
+class ConfigManager:
+    """設定管理クラス"""
+    
+    def __init__(self):
+        """初期化"""
+        self.env_file = find_dotenv() or Path(".env")
+        if not self.env_file:
+            # .envファイルが存在しない場合、.env.exampleからコピー
+            self._create_env_from_example()
+        self.load_config()
+    
+    def _create_env_from_example(self):
+        """env.exampleから.envファイルを作成"""
+        example_file = Path(".env.example")
+        env_file = Path(".env")
+        
+        if example_file.exists() and not env_file.exists():
+            env_file.write_text(example_file.read_text())
+            self.env_file = env_file
+    
+    def load_config(self) -> Dict[str, str]:
+        """環境変数を読み込み"""
+        load_dotenv(self.env_file, override=True)
+        
+        config = {
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
+            "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
+            "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
+            "COMPANY_VECTOR_STORE_ID": os.getenv("COMPANY_VECTOR_STORE_ID", ""),
+            "PERSONAL_VECTOR_STORE_ID": os.getenv("PERSONAL_VECTOR_STORE_ID", ""),
+            "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gpt-4o-mini"),
+            "DB_PATH": os.getenv("DB_PATH", "chat_history.db"),
+            "CHAINLIT_HOST": os.getenv("CHAINLIT_HOST", "0.0.0.0"),
+            "CHAINLIT_PORT": os.getenv("CHAINLIT_PORT", "8000"),
+        }
+        
+        return config
+    
+    def save_config(self, config: Dict[str, str]) -> bool:
+        """設定を.envファイルに保存"""
+        try:
+            for key, value in config.items():
+                if value:  # 空でない値のみ保存
+                    # クォーテーションを避けるため、quote_mode='never'を使用
+                    # quote_mode='never'は値をクォートしない
+                    try:
+                        set_key(self.env_file, key, value, quote_mode='never')
+                    except TypeError:
+                        # 古いバージョンのpython-dotenvの場合
+                        set_key(self.env_file, key, value)
+                    
+                    # 環境変数を即座に更新
+                    os.environ[key] = value
+            
+            # 設定を再読み込みして確実に反映
+            load_dotenv(self.env_file, override=True)
+            return True
+        except Exception as e:
+            print(f"Error saving config: {e}")
+            return False
+    
+    def get_api_key(self) -> str:
+        """APIキーを取得"""
+        return os.getenv("OPENAI_API_KEY", "")
+    
+    def set_api_key(self, api_key: str) -> bool:
+        """APIキーを設定"""
+        success = self.save_config({"OPENAI_API_KEY": api_key})
+        if success:
+            # 環境変数を即座に更新（save_configでも行うが念のため）
+            os.environ["OPENAI_API_KEY"] = api_key
+        return success
+    
+    def get_proxy_settings(self) -> Dict[str, str]:
+        """プロキシ設定を取得"""
+        return {
+            "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
+            "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
+        }
+    
+    def set_proxy_settings(self, http_proxy: str = "", https_proxy: str = "") -> bool:
+        """プロキシ設定を保存"""
+        config = {}
+        if http_proxy:
+            config["HTTP_PROXY"] = http_proxy
+        if https_proxy:
+            config["HTTPS_PROXY"] = https_proxy
+        return self.save_config(config)
+    
+    def get_vector_store_ids(self) -> Dict[str, str]:
+        """ベクトルストアIDを取得"""
+        return {
+            "company": os.getenv("COMPANY_VECTOR_STORE_ID", ""),
+            "personal": os.getenv("PERSONAL_VECTOR_STORE_ID", ""),
+        }
+    
+    def set_vector_store_ids(self, company_id: str = "", personal_id: str = "") -> bool:
+        """ベクトルストアIDを設定"""
+        config = {}
+        if company_id:
+            config["COMPANY_VECTOR_STORE_ID"] = company_id
+        if personal_id:
+            config["PERSONAL_VECTOR_STORE_ID"] = personal_id
+        return self.save_config(config)
+    
+    async def test_connection(self) -> Tuple[bool, str, Optional[List[str]]]:
+        """
+        OpenAI API接続テスト
+        
+        Returns:
+            Tuple[bool, str, Optional[List[str]]]: 
+                - 成功/失敗のフラグ
+                - メッセージ
+                - 利用可能なモデルのリスト（成功時のみ）
+        """
+        api_key = self.get_api_key()
+        
+        if not api_key or api_key == "your_api_key_here":
+            return False, "APIキーが設定されていません", None
+        
+        try:
+            # プロキシ設定を取得
+            proxy_settings = self.get_proxy_settings()
+            http_client = None
+            
+            if proxy_settings["HTTP_PROXY"] or proxy_settings["HTTPS_PROXY"]:
+                # プロキシが設定されている場合
+                proxies = {}
+                if proxy_settings["HTTP_PROXY"]:
+                    proxies["http://"] = proxy_settings["HTTP_PROXY"]
+                if proxy_settings["HTTPS_PROXY"]:
+                    proxies["https://"] = proxy_settings["HTTPS_PROXY"]
+                
+                http_client = httpx.Client(proxies=proxies)
+            
+            # OpenAIクライアントを作成
+            client = OpenAI(
+                api_key=api_key,
+                http_client=http_client
+            )
+            
+            # モデル一覧を取得してテスト
+            models = await asyncio.to_thread(client.models.list)
+            model_ids = [model.id for model in models.data]
+            
+            # GPTモデルのみフィルタリング
+            gpt_models = [m for m in model_ids if 'gpt' in m.lower()]
+            gpt_models.sort(reverse=True)  # 新しいモデルを上に
+            
+            return True, "接続成功！", gpt_models[:10]  # 上位10個のモデル
+            
+        except openai.AuthenticationError:
+            return False, "認証エラー: APIキーが無効です", None
+        except openai.APIConnectionError as e:
+            return False, f"接続エラー: {str(e)}", None
+        except openai.RateLimitError:
+            return False, "レート制限エラー: しばらく待ってから再試行してください", None
+        except Exception as e:
+            return False, f"予期しないエラー: {str(e)}", None
+    
+    async def test_simple_completion(self) -> Tuple[bool, str]:
+        """
+        簡単なチャット完了テスト
+        
+        Returns:
+            Tuple[bool, str]: 成功/失敗のフラグとレスポンスメッセージ
+        """
+        api_key = self.get_api_key()
+        
+        if not api_key or api_key == "your_api_key_here":
+            return False, "APIキーが設定されていません"
+        
+        try:
+            # プロキシ設定を取得
+            proxy_settings = self.get_proxy_settings()
+            http_client = None
+            
+            if proxy_settings["HTTP_PROXY"] or proxy_settings["HTTPS_PROXY"]:
+                proxies = {}
+                if proxy_settings["HTTP_PROXY"]:
+                    proxies["http://"] = proxy_settings["HTTP_PROXY"]
+                if proxy_settings["HTTPS_PROXY"]:
+                    proxies["https://"] = proxy_settings["HTTPS_PROXY"]
+                
+                http_client = httpx.Client(proxies=proxies)
+            
+            # OpenAIクライアントを作成
+            client = OpenAI(
+                api_key=api_key,
+                http_client=http_client
+            )
+            
+            # テストメッセージを送信
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model=os.getenv("DEFAULT_MODEL", "gpt-4o-mini"),
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": "Say 'Hello, World!' in Japanese."}
+                ],
+                max_tokens=50
+            )
+            
+            result = response.choices[0].message.content
+            return True, f"テスト成功！レスポンス: {result}"
+            
+        except Exception as e:
+            return False, f"テスト失敗: {str(e)}"
+    
+    def get_all_settings(self) -> Dict[str, any]:
+        """すべての設定を取得（最新の値を反映）"""
+        # 環境変数を再読み込みして最新の値を取得
+        config = self.load_config()
+        
+        # APIキーをマスク
+        if config["OPENAI_API_KEY"] and config["OPENAI_API_KEY"] != "your_api_key_here":
+            key = config["OPENAI_API_KEY"]
+            config["OPENAI_API_KEY_DISPLAY"] = f"sk-{'*' * 8}...{key[-4:]}" if len(key) > 4 else "***"
+        else:
+            config["OPENAI_API_KEY_DISPLAY"] = "未設定"
+        
+        return config
+
+
+# グローバルインスタンス
+config_manager = ConfigManager()
