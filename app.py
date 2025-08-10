@@ -1,27 +1,29 @@
 """
-Phase 2: 設定管理機能を含むChainlitアプリケーション
+Phase 3: データベース基盤を含むChainlitアプリケーション
 - APIキーの設定と保存
 - 接続テスト機能
-- プロキシ設定
-- モデル選択
+- SQLite3データベース管理
+- セッション永続化
 """
 
 import chainlit as cl
 from dotenv import load_dotenv
 import os
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import asyncio
 from pathlib import Path
+from datetime import datetime
 
-# utils/config.pyをインポート
+# utils モジュールをインポート
 from utils.config import config_manager
+from utils.session_handler import session_handler
 
 # .envファイルの読み込み
 load_dotenv()
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
-VERSION = "0.2.0 (Phase 2)"
+VERSION = "0.3.0 (Phase 3)"
 
 
 @cl.on_chat_start
@@ -32,13 +34,26 @@ async def on_chat_start():
     # 設定を読み込み
     settings = config_manager.get_all_settings()
     
+    # 新しいセッションを作成
+    session_id = await session_handler.create_session(
+        title=f"Chat - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        chat_type="responses",
+        model=settings.get('DEFAULT_MODEL', 'gpt-4o-mini'),
+        system_prompt=""
+    )
+    
     # セッション情報の初期化
-    cl.user_session.set("phase", "2")
+    cl.user_session.set("phase", "3")
     cl.user_session.set("app_name", APP_NAME)
     cl.user_session.set("settings", settings)
+    cl.user_session.set("session_id", session_id)
+    cl.user_session.set("message_count", 0)
     
     # ウェルカムメッセージの作成
     api_status = "✅ 設定済み" if settings.get("OPENAI_API_KEY") and settings["OPENAI_API_KEY"] != "your_api_key_here" else "⚠️ 未設定"
+    
+    # データベース統計を取得
+    stats = await session_handler.get_statistics()
     
     welcome_message = f"""
 # 🎯 {APP_NAME} へようこそ！
@@ -48,24 +63,25 @@ async def on_chat_start():
 ## 📊 現在の状態
 - **APIキー**: {api_status}
 - **デフォルトモデル**: {settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}
-- **プロキシ**: {'設定済み' if settings.get('HTTP_PROXY') else '未設定'}
+- **セッションID**: `{session_id[:8]}...`
+- **データベース**: 📁 {stats['session_count']} セッション, 💬 {stats['message_count']} メッセージ
 
-## 🔧 設定コマンド
-以下のコマンドをチャットに入力して設定を変更できます：
+## 🔧 利用可能なコマンド
+- `/help` - コマンド一覧とヘルプを表示
+- `/sessions` - セッション一覧を表示
+- `/session [ID]` - セッションを切り替え
+- `/rename [新しいタイトル]` - 現在のセッションをリネーム
+- `/stats` - データベース統計を表示
+- `/clear` - 新しいセッションを開始
 
-- `/setkey [APIキー]` - OpenAI APIキーを設定
-- `/setmodel [モデル名]` - デフォルトモデルを設定
-- `/setproxy [URL]` - プロキシを設定
-- `/test` - API接続テスト
-- `/status` - 現在の設定状態を表示
-- `/models` - 利用可能なモデル一覧を取得
+💡 **ヒント**: まずは `/help` でコマンドの詳細を確認してください！
 
-## 📝 Phase 2の新機能
-- ✅ 設定管理機能の実装
-- ✅ APIキーの永続保存（.envファイル）
-- ✅ 接続テスト機能
-- ✅ モデル一覧の取得
-- ✅ プロキシ設定のサポート
+## 📝 Phase 3の新機能
+- ✅ SQLite3データベースの実装
+- ✅ セッション管理機能
+- ✅ メッセージ履歴の永続化
+- ✅ セッション一覧と切り替え
+- ✅ データベース統計表示
 
 ---
 設定が完了したら、メッセージを送信してテストできます。
@@ -83,8 +99,10 @@ async def on_chat_start():
     # 接続テストボタンを追加
     actions = [
         cl.Action(name="test_connection", payload={"value": "test"}, description="接続テスト"),
-        cl.Action(name="show_status", payload={"value": "test"}, description="設定状態"),
+        cl.Action(name="show_status", payload={"value": "status"}, description="設定状態"),
+        cl.Action(name="show_sessions", payload={"value": "sessions"}, description="セッション一覧"),
     ]
+    
     await cl.Message(
         content="🔧 クイックアクション:",
         actions=actions,
@@ -99,6 +117,19 @@ async def on_message(message: cl.Message):
     """
     content = message.content.strip()
     settings = cl.user_session.get("settings", {})
+    session_id = cl.user_session.get("session_id")
+    
+    # メッセージをデータベースに保存
+    if session_id:
+        await session_handler.add_message(
+            session_id=session_id,
+            role="user",
+            content=content
+        )
+        
+        # メッセージカウントを更新
+        count = cl.user_session.get("message_count", 0) + 1
+        cl.user_session.set("message_count", count)
     
     # コマンド処理
     if content.startswith("/"):
@@ -107,24 +138,29 @@ async def on_message(message: cl.Message):
     
     # APIキーの確認
     if not settings.get("OPENAI_API_KEY") or settings["OPENAI_API_KEY"] == "your_api_key_here":
-        await cl.Message(
-            content="❌ APIキーが設定されていません。`/setkey sk-xxxxx` で設定してください。",
-            author="System"
-        ).send()
-        return
-    
-    # Phase 2では接続テストのデモ応答を返す
-    response = f"""
-📨 メッセージを受信しました:
+        response = "❌ APIキーが設定されていません。`/setkey sk-xxxxx` で設定してください。"
+    else:
+        # Phase 3ではデモ応答を返す
+        response = f"""
+📨 メッセージを受信しました（メッセージ #{cl.user_session.get("message_count", 1)}）:
 「{content}」
 
-## 現在の設定状態
-- **APIキー**: {settings.get('OPENAI_API_KEY_DISPLAY', '未設定')}
+## セッション情報
+- **セッションID**: `{session_id[:8] if session_id else 'なし'}...`
+- **メッセージ数**: {cl.user_session.get("message_count", 0)}
 - **モデル**: {settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}
 
-🔄 Phase 2では設定管理機能のテスト中です。
+🔄 Phase 3ではデータベース機能のテスト中です。
 Phase 4以降で実際のAI応答機能を実装予定です。
-    """
+        """
+    
+    # 応答をデータベースに保存
+    if session_id:
+        await session_handler.add_message(
+            session_id=session_id,
+            role="assistant",
+            content=response
+        )
     
     await cl.Message(content=response).send()
 
@@ -137,7 +173,37 @@ async def handle_command(command: str):
     cmd = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
     
-    if cmd == "/setkey":
+    if cmd == "/help":
+        await show_help()
+    
+    elif cmd == "/sessions":
+        await show_sessions()
+    
+    elif cmd == "/session":
+        if not args:
+            await cl.Message(
+                content="❌ 使用方法: `/session [セッションID]`",
+                author="System"
+            ).send()
+            return
+        await switch_session(args)
+    
+    elif cmd == "/rename":
+        if not args:
+            await cl.Message(
+                content="❌ 使用方法: `/rename [新しいタイトル]`",
+                author="System"
+            ).send()
+            return
+        await rename_session(args)
+    
+    elif cmd == "/stats":
+        await show_statistics()
+    
+    elif cmd == "/clear":
+        await start_new_session()
+    
+    elif cmd == "/setkey":
         if not args:
             await cl.Message(
                 content="❌ 使用方法: `/setkey sk-xxxxxxxxxxxxx`",
@@ -235,13 +301,7 @@ async def handle_command(command: str):
             content=f"""
 ❓ 不明なコマンド: {cmd}
 
-利用可能なコマンド:
-- `/setkey [APIキー]` - OpenAI APIキーを設定
-- `/setmodel [モデル名]` - デフォルトモデルを設定
-- `/setproxy [URL]` - プロキシを設定
-- `/test` - API接続テスト
-- `/status` - 現在の設定状態を表示
-- `/models` - 利用可能なモデル一覧を取得
+`/help` で利用可能なコマンドを確認できます。
             """,
             author="System"
         ).send()
@@ -257,6 +317,239 @@ async def test_connection_callback(action: cl.Action):
 async def show_status_callback(action: cl.Action):
     """設定状態表示ボタンのコールバック"""
     await show_status()
+
+
+@cl.action_callback("show_sessions")
+async def show_sessions_callback(action: cl.Action):
+    """セッション一覧表示ボタンのコールバック"""
+    await show_sessions()
+
+
+async def show_help():
+    """コマンドヘルプを表示"""
+    help_message = f"""
+# 📚 コマンドヘルプ
+
+## 🗂️ セッション管理（Phase 3 新機能）
+
+### `/sessions`
+- **説明**: 保存されているセッション一覧を表示
+- **使用例**: `/sessions`
+
+### `/session [ID]`
+- **説明**: 指定したセッションに切り替え
+- **使用例**: `/session abc123def456`
+
+### `/rename [タイトル]`
+- **説明**: 現在のセッションのタイトルを変更
+- **使用例**: `/rename OpenAI API テスト`
+
+### `/clear`
+- **説明**: 新しいセッションを開始
+- **使用例**: `/clear`
+
+### `/stats`
+- **説明**: データベースの統計情報を表示
+- **使用例**: `/stats`
+
+## 🔧 設定管理
+
+### `/help`
+- **説明**: このヘルプを表示
+- **使用例**: `/help`
+
+### `/test`
+- **説明**: OpenAI APIとの接続をテスト
+- **使用例**: `/test`
+
+### `/status`
+- **説明**: 現在のすべての設定を表示
+- **使用例**: `/status`
+
+### `/setkey [APIキー]`
+- **説明**: OpenAI APIキーを設定
+- **使用例**: `/setkey sk-proj-xxxxxxxxxxxxx`
+
+### `/setmodel [モデル名]`
+- **説明**: デフォルトのGPTモデルを変更
+- **使用例**: `/setmodel gpt-4o-mini`
+
+### `/setproxy [URL]`
+- **説明**: HTTP/HTTPSプロキシを設定
+- **使用例**: `/setproxy http://proxy.example.com:8080`
+
+### `/models`
+- **説明**: 利用可能なGPTモデルの一覧を取得
+- **使用例**: `/models`
+
+## 💡 クイックスタート
+
+1️⃣ APIキーを設定: `/setkey sk-proj-xxx`
+2️⃣ 接続テスト: `/test`
+3️⃣ モデルを選択: `/setmodel gpt-4o-mini`
+4️⃣ 新しいセッション: `/clear`
+5️⃣ セッション一覧: `/sessions`
+
+## ℹ️ ヒント
+- セッションはすべてSQLiteデータベースに保存されます
+- アプリを再起動しても履歴は保持されます
+- セッションIDの最初の8文字を入力すれば切り替え可能
+    """
+    
+    await cl.Message(content=help_message, author="System").send()
+
+
+async def show_sessions():
+    """セッション一覧を表示"""
+    sessions = await session_handler.list_sessions(limit=10)
+    
+    if not sessions:
+        await cl.Message(
+            content="📭 セッションがありません。新しいチャットを始めてください。",
+            author="System"
+        ).send()
+        return
+    
+    current_session_id = cl.user_session.get("session_id")
+    
+    sessions_text = "# 📋 セッション一覧\n\n"
+    for i, session in enumerate(sessions, 1):
+        is_current = "⭐ " if session['id'] == current_session_id else ""
+        created = session.get('created_at', 'Unknown')
+        sessions_text += f"""
+{i}. {is_current}**{session['title']}**
+   - ID: `{session['id'][:8]}...`
+   - モデル: {session.get('model', 'Unknown')}
+   - 作成日時: {created}
+"""
+    
+    sessions_text += "\n💡 **切り替え方法**: `/session [ID最初の8文字]`"
+    
+    await cl.Message(content=sessions_text, author="System").send()
+
+
+async def switch_session(session_id: str):
+    """セッションを切り替え"""
+    # 短縮IDでも検索可能に
+    sessions = await session_handler.list_sessions()
+    target_session = None
+    
+    for session in sessions:
+        if session['id'].startswith(session_id):
+            target_session = session
+            break
+    
+    if not target_session:
+        await cl.Message(
+            content=f"❌ セッション `{session_id}` が見つかりません。",
+            author="System"
+        ).send()
+        return
+    
+    # セッションを切り替え
+    cl.user_session.set("session_id", target_session['id'])
+    
+    # メッセージ履歴を取得
+    messages = await session_handler.get_messages(target_session['id'], limit=5)
+    message_count = await session_handler.get_message_count(target_session['id'])
+    cl.user_session.set("message_count", message_count)
+    
+    response = f"""
+✅ セッションを切り替えました
+
+**タイトル**: {target_session['title']}
+**ID**: `{target_session['id'][:8]}...`
+**メッセージ数**: {message_count}
+
+## 最近のメッセージ
+"""
+    
+    for msg in messages[-5:]:
+        role_icon = "👤" if msg['role'] == 'user' else "🤖"
+        content_preview = msg['content'][:100] + "..." if len(msg['content']) > 100 else msg['content']
+        response += f"\n{role_icon} {content_preview}"
+    
+    await cl.Message(content=response, author="System").send()
+
+
+async def rename_session(new_title: str):
+    """現在のセッションをリネーム"""
+    session_id = cl.user_session.get("session_id")
+    
+    if not session_id:
+        await cl.Message(
+            content="❌ アクティブなセッションがありません。",
+            author="System"
+        ).send()
+        return
+    
+    success = await session_handler.update_session(session_id, title=new_title)
+    
+    if success:
+        await cl.Message(
+            content=f"✅ セッションタイトルを「{new_title}」に変更しました。",
+            author="System"
+        ).send()
+    else:
+        await cl.Message(
+            content="❌ タイトルの変更に失敗しました。",
+            author="System"
+        ).send()
+
+
+async def show_statistics():
+    """データベース統計を表示"""
+    stats = await session_handler.get_statistics()
+    
+    db_size_mb = stats['db_size'] / (1024 * 1024)
+    
+    stats_message = f"""
+# 📊 データベース統計
+
+## 概要
+- **セッション数**: {stats['session_count']}
+- **メッセージ総数**: {stats['message_count']}
+- **ペルソナ数**: {stats['persona_count']}
+- **データベースサイズ**: {db_size_mb:.2f} MB
+
+## 最終更新
+- **最後のセッション**: {stats.get('last_session_date', 'なし')}
+
+## 現在のセッション
+- **ID**: `{cl.user_session.get("session_id", "なし")[:8] if cl.user_session.get("session_id") else "なし"}...`
+- **メッセージ数**: {cl.user_session.get("message_count", 0)}
+    """
+    
+    await cl.Message(content=stats_message, author="System").send()
+
+
+async def start_new_session():
+    """新しいセッションを開始"""
+    settings = cl.user_session.get("settings", {})
+    
+    # 新しいセッションを作成
+    session_id = await session_handler.create_session(
+        title=f"Chat - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        chat_type="responses",
+        model=settings.get('DEFAULT_MODEL', 'gpt-4o-mini'),
+        system_prompt=""
+    )
+    
+    # セッション情報を更新
+    cl.user_session.set("session_id", session_id)
+    cl.user_session.set("message_count", 0)
+    
+    await cl.Message(
+        content=f"""
+✅ 新しいセッションを開始しました
+
+**セッションID**: `{session_id[:8]}...`
+**モデル**: {settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}
+
+チャットを始めてください！
+        """,
+        author="System"
+    ).send()
 
 
 async def test_connection():
@@ -310,12 +603,12 @@ async def show_status():
 - **データベース**: {settings.get('DB_PATH', 'chat_history.db')}
 
 **ネットワーク設定:**
-- **HTTPプロキシ**: {settings.get('HTTP_PROXY', '未設定')}
-- **HTTPSプロキシ**: {settings.get('HTTPS_PROXY', '未設定')}
+- **HTTPプロキシ**: {settings.get('HTTP_PROXY', '未設定') or '未設定'}
+- **HTTPSプロキシ**: {settings.get('HTTPS_PROXY', '未設定') or '未設定'}
 
 **ベクトルストア設定:**
-- **社内VS ID**: {settings.get('COMPANY_VECTOR_STORE_ID', '未設定')}
-- **個人VS ID**: {settings.get('PERSONAL_VECTOR_STORE_ID', '未設定')}
+- **社内VS ID**: {settings.get('COMPANY_VECTOR_STORE_ID', '未設定') or '未設定'}
+- **個人VS ID**: {settings.get('PERSONAL_VECTOR_STORE_ID', '未設定') or '未設定'}
 
 **サーバー設定:**
 - **ホスト**: {settings.get('CHAINLIT_HOST', '0.0.0.0')}
@@ -363,3 +656,4 @@ if __name__ == "__main__":
     current_settings = config_manager.get_all_settings()
     print(f"API Key: {current_settings.get('OPENAI_API_KEY_DISPLAY', 'Not set')}")
     print(f"Default Model: {current_settings.get('DEFAULT_MODEL', 'Not set')}")
+    print(f"Database Path: {current_settings.get('DB_PATH', 'chat_history.db')}")
