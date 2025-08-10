@@ -90,3 +90,7 @@ run*.bat
 run*.ps1
 run*.sh
 DELETE_FILES.md
+
+# SQLite tools
+sqlite-tools-win-x64-3500400.zip
+sqlite-tools-win-x64-3500400/
