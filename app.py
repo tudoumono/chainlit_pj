@@ -1,9 +1,9 @@
 """
-Phase 3: データベース基盤を含むChainlitアプリケーション
-- APIキーの設定と保存
-- 接続テスト機能
-- SQLite3データベース管理
-- セッション永続化
+Phase 4: 基本的なチャット機能を含むChainlitアプリケーション
+- OpenAI Responses APIの実装
+- ストリーミング応答
+- メッセージ履歴管理
+- 実際のAI応答機能
 """
 
 import chainlit as cl
@@ -13,17 +13,19 @@ from typing import Optional, Dict, List
 import asyncio
 from pathlib import Path
 from datetime import datetime
+import json
 
 # utils モジュールをインポート
 from utils.config import config_manager
 from utils.session_handler import session_handler
+from utils.response_handler import response_handler
 
 # .envファイルの読み込み
 load_dotenv()
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
-VERSION = "0.3.0 (Phase 3)"
+VERSION = "0.4.0 (Phase 4)"
 
 
 @cl.on_chat_start
@@ -43,11 +45,12 @@ async def on_chat_start():
     )
     
     # セッション情報の初期化
-    cl.user_session.set("phase", "3")
+    cl.user_session.set("phase", "4")
     cl.user_session.set("app_name", APP_NAME)
     cl.user_session.set("settings", settings)
     cl.user_session.set("session_id", session_id)
     cl.user_session.set("message_count", 0)
+    cl.user_session.set("total_tokens", 0)
     
     # ウェルカムメッセージの作成
     api_status = "✅ 設定済み" if settings.get("OPENAI_API_KEY") and settings["OPENAI_API_KEY"] != "your_api_key_here" else "⚠️ 未設定"
@@ -68,23 +71,23 @@ async def on_chat_start():
 
 ## 🔧 利用可能なコマンド
 - `/help` - コマンド一覧とヘルプを表示
-- `/sessions` - セッション一覧を表示
-- `/session [ID]` - セッションを切り替え
-- `/rename [新しいタイトル]` - 現在のセッションをリネーム
-- `/stats` - データベース統計を表示
+- `/model [モデル名]` - このセッションのモデルを変更
+- `/system [プロンプト]` - システムプロンプトを設定
 - `/clear` - 新しいセッションを開始
+- `/sessions` - セッション一覧を表示
+- `/stats` - データベース統計を表示
 
 💡 **ヒント**: まずは `/help` でコマンドの詳細を確認してください！
 
-## 📝 Phase 3の新機能
-- ✅ SQLite3データベースの実装
-- ✅ セッション管理機能
-- ✅ メッセージ履歴の永続化
-- ✅ セッション一覧と切り替え
-- ✅ データベース統計表示
+## 📝 Phase 4の新機能
+- ✅ **OpenAI Responses API統合**
+- ✅ **ストリーミング応答**
+- ✅ **実際のAI応答機能**
+- ✅ **トークンカウント**
+- ✅ **自動タイトル生成**
 
 ---
-設定が完了したら、メッセージを送信してテストできます。
+**AIと会話を始めましょう！** 何でも質問してください。
     """
     
     await cl.Message(content=welcome_message).send()
@@ -95,19 +98,12 @@ async def on_chat_start():
             content="⚠️ **APIキーが未設定です**\n`/setkey sk-xxxxx` コマンドで設定してください。",
             author="System"
         ).send()
-    
-    # 接続テストボタンを追加
-    actions = [
-        cl.Action(name="test_connection", payload={"value": "test"}, description="接続テスト"),
-        cl.Action(name="show_status", payload={"value": "status"}, description="設定状態"),
-        cl.Action(name="show_sessions", payload={"value": "sessions"}, description="セッション一覧"),
-    ]
-    
-    await cl.Message(
-        content="🔧 クイックアクション:",
-        actions=actions,
-        author="System"
-    ).send()
+    else:
+        # APIキーが設定されている場合は簡単なテストメッセージ
+        await cl.Message(
+            content="✨ **準備完了！** AIと会話できます。例：「こんにちは」「Pythonについて教えて」",
+            author="System"
+        ).send()
 
 
 @cl.on_message
@@ -119,7 +115,20 @@ async def on_message(message: cl.Message):
     settings = cl.user_session.get("settings", {})
     session_id = cl.user_session.get("session_id")
     
-    # メッセージをデータベースに保存
+    # コマンド処理
+    if content.startswith("/"):
+        await handle_command(content)
+        return
+    
+    # APIキーの確認
+    if not settings.get("OPENAI_API_KEY") or settings["OPENAI_API_KEY"] == "your_api_key_here":
+        await cl.Message(
+            content="❌ APIキーが設定されていません。`/setkey sk-xxxxx` で設定してください。",
+            author="System"
+        ).send()
+        return
+    
+    # ユーザーメッセージをデータベースに保存
     if session_id:
         await session_handler.add_message(
             session_id=session_id,
@@ -131,38 +140,96 @@ async def on_message(message: cl.Message):
         count = cl.user_session.get("message_count", 0) + 1
         cl.user_session.set("message_count", count)
     
-    # コマンド処理
-    if content.startswith("/"):
-        await handle_command(content)
-        return
-    
-    # APIキーの確認
-    if not settings.get("OPENAI_API_KEY") or settings["OPENAI_API_KEY"] == "your_api_key_here":
-        response = "❌ APIキーが設定されていません。`/setkey sk-xxxxx` で設定してください。"
-    else:
-        # Phase 3ではデモ応答を返す
-        response = f"""
-📨 メッセージを受信しました（メッセージ #{cl.user_session.get("message_count", 1)}）:
-「{content}」
-
-## セッション情報
-- **セッションID**: `{session_id[:8] if session_id else 'なし'}...`
-- **メッセージ数**: {cl.user_session.get("message_count", 0)}
-- **モデル**: {settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}
-
-🔄 Phase 3ではデータベース機能のテスト中です。
-Phase 4以降で実際のAI応答機能を実装予定です。
-        """
-    
-    # 応答をデータベースに保存
+    # メッセージ履歴を取得
+    messages = []
     if session_id:
-        await session_handler.add_message(
-            session_id=session_id,
-            role="assistant",
-            content=response
+        db_messages = await session_handler.get_messages(session_id)
+        messages = response_handler.format_messages_for_api(
+            db_messages,
+            system_prompt=cl.user_session.get("system_prompt", "")
         )
     
-    await cl.Message(content=response).send()
+    # 最新のユーザーメッセージを追加（まだDBから取得できない場合）
+    if not messages or messages[-1]["content"] != content:
+        messages.append({"role": "user", "content": content})
+    
+    # AIレスポンスメッセージを作成
+    ai_message = cl.Message(content="")
+    await ai_message.send()
+    
+    # ストリーミング応答を処理
+    full_response = ""
+    token_usage = {}
+    
+    try:
+        # OpenAI APIを呼び出し
+        async for chunk in response_handler.create_chat_completion(
+            messages=messages,
+            model=settings.get('DEFAULT_MODEL', 'gpt-4o-mini'),
+            temperature=0.7,
+            stream=True
+        ):
+            # エラーチェック
+            if "error" in chunk:
+                await cl.Message(content=f"❌ エラー: {chunk['error']}").send()
+                return
+            
+            # ストリーミングコンテンツを処理
+            if chunk.get("choices"):
+                for choice in chunk["choices"]:
+                    if "delta" in choice:
+                        delta = choice["delta"]
+                        if "content" in delta:
+                            full_response += delta["content"]
+                            await ai_message.stream_token(delta["content"])
+            
+            # トークン使用量を更新
+            if "usage" in chunk:
+                token_usage = chunk["usage"]
+        
+        # 最終的なメッセージを更新
+        # await cl.Message(content=full_response).send()
+        await ai_message.update()
+
+        
+        # レスポンスをデータベースに保存
+        if session_id and full_response:
+            await session_handler.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=full_response,
+                token_usage=token_usage
+            )
+        
+        # トークン使用量を表示
+        if token_usage:
+            usage_text = response_handler.format_token_usage(token_usage)
+            total_tokens = cl.user_session.get("total_tokens", 0) + token_usage.get("total_tokens", 0)
+            cl.user_session.set("total_tokens", total_tokens)
+            
+            await cl.Message(
+                content=f"{usage_text}\n📈 セッション合計: {total_tokens} トークン",
+                author="System"
+            ).send()
+        
+        # 最初のメッセージの場合、タイトルを自動生成
+        if cl.user_session.get("message_count", 0) == 1:
+            # 非同期でタイトルを生成（UIをブロックしない）
+            asyncio.create_task(auto_generate_title(session_id, messages))
+    
+    except Exception as e:
+        await cl.Message(content=f"❌ エラーが発生しました: {str(e)}").send()
+        print(f"Error in on_message: {e}")
+
+
+async def auto_generate_title(session_id: str, messages: List[Dict[str, str]]):
+    """セッションタイトルを自動生成"""
+    try:
+        title = await response_handler.generate_title(messages)
+        if title and session_id:
+            await session_handler.update_session(session_id, title=title)
+    except Exception as e:
+        print(f"Error generating title: {e}")
 
 
 async def handle_command(command: str):
@@ -175,6 +242,18 @@ async def handle_command(command: str):
     
     if cmd == "/help":
         await show_help()
+    
+    elif cmd == "/model":
+        if not args:
+            await cl.Message(
+                content="❌ 使用方法: `/model gpt-4o-mini`\n利用可能: gpt-4o-mini, gpt-4o, gpt-4-turbo, gpt-3.5-turbo",
+                author="System"
+            ).send()
+            return
+        await change_session_model(args)
+    
+    elif cmd == "/system":
+        await set_system_prompt(args)
     
     elif cmd == "/sessions":
         await show_sessions()
@@ -218,6 +297,9 @@ async def handle_command(command: str):
             new_settings = config_manager.get_all_settings()
             cl.user_session.set("settings", new_settings)
             
+            # response_handlerのAPIキーも更新
+            response_handler.update_api_key(args)
+            
             await cl.Message(
                 content="✅ APIキーを設定しました",
                 author="System"
@@ -239,7 +321,7 @@ async def handle_command(command: str):
             ).send()
             return
         
-        # 環境変数を即座に更新
+        # デフォルトモデルを変更
         os.environ["DEFAULT_MODEL"] = args
         success = config_manager.save_config({"DEFAULT_MODEL": args})
         if success:
@@ -247,43 +329,16 @@ async def handle_command(command: str):
             new_settings = config_manager.get_all_settings()
             cl.user_session.set("settings", new_settings)
             
+            # response_handlerのモデルも更新
+            response_handler.update_model(args)
+            
             await cl.Message(
                 content=f"✅ デフォルトモデルを {args} に設定しました",
-                author="System"
-            ).send()
-            
-            # 更新後の状態を表示
-            await cl.Message(
-                content=f"📊 現在のモデル: {new_settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}",
                 author="System"
             ).send()
         else:
             await cl.Message(
                 content="❌ モデルの設定に失敗しました",
-                author="System"
-            ).send()
-    
-    elif cmd == "/setproxy":
-        if not args:
-            await cl.Message(
-                content="❌ 使用方法: `/setproxy http://proxy.example.com:8080`",
-                author="System"
-            ).send()
-            return
-        
-        success = config_manager.set_proxy_settings(http_proxy=args, https_proxy=args)
-        if success:
-            # 設定を再読み込みしてセッションを更新
-            new_settings = config_manager.get_all_settings()
-            cl.user_session.set("settings", new_settings)
-            
-            await cl.Message(
-                content=f"✅ プロキシを {args} に設定しました",
-                author="System"
-            ).send()
-        else:
-            await cl.Message(
-                content="❌ プロキシの設定に失敗しました",
                 author="System"
             ).send()
     
@@ -307,30 +362,60 @@ async def handle_command(command: str):
         ).send()
 
 
-@cl.action_callback("test_connection")
-async def test_connection_callback(action: cl.Action):
-    """接続テストボタンのコールバック"""
-    await test_connection()
+async def change_session_model(model: str):
+    """現在のセッションのモデルを変更"""
+    session_id = cl.user_session.get("session_id")
+    if session_id:
+        # セッション設定を更新
+        settings = cl.user_session.get("settings", {})
+        settings["DEFAULT_MODEL"] = model
+        cl.user_session.set("settings", settings)
+        
+        await cl.Message(
+            content=f"✅ このセッションのモデルを {model} に変更しました",
+            author="System"
+        ).send()
+    else:
+        await cl.Message(
+            content="❌ アクティブなセッションがありません",
+            author="System"
+        ).send()
 
 
-@cl.action_callback("show_status")
-async def show_status_callback(action: cl.Action):
-    """設定状態表示ボタンのコールバック"""
-    await show_status()
-
-
-@cl.action_callback("show_sessions")
-async def show_sessions_callback(action: cl.Action):
-    """セッション一覧表示ボタンのコールバック"""
-    await show_sessions()
+async def set_system_prompt(prompt: str):
+    """システムプロンプトを設定"""
+    cl.user_session.set("system_prompt", prompt)
+    
+    if prompt:
+        await cl.Message(
+            content=f"✅ システムプロンプトを設定しました:\n```\n{prompt}\n```",
+            author="System"
+        ).send()
+    else:
+        await cl.Message(
+            content="✅ システムプロンプトをクリアしました",
+            author="System"
+        ).send()
 
 
 async def show_help():
     """コマンドヘルプを表示"""
     help_message = f"""
-# 📚 コマンドヘルプ
+# 📚 コマンドヘルプ (Phase 4)
 
-## 🗂️ セッション管理（Phase 3 新機能）
+## 🤖 AI設定コマンド（新機能）
+
+### `/model [モデル名]`
+- **説明**: このセッションで使用するモデルを変更
+- **使用例**: `/model gpt-4o`
+- **選択肢**: gpt-4o-mini, gpt-4o, gpt-4-turbo, gpt-3.5-turbo
+
+### `/system [プロンプト]`
+- **説明**: システムプロンプトを設定（AIの振る舞いを定義）
+- **使用例**: `/system あなたは親切なアシスタントです`
+- **クリア**: `/system` （引数なしでクリア）
+
+## 🗂️ セッション管理
 
 ### `/sessions`
 - **説明**: 保存されているセッション一覧を表示
@@ -342,14 +427,14 @@ async def show_help():
 
 ### `/rename [タイトル]`
 - **説明**: 現在のセッションのタイトルを変更
-- **使用例**: `/rename OpenAI API テスト`
+- **使用例**: `/rename Python学習`
 
 ### `/clear`
 - **説明**: 新しいセッションを開始
 - **使用例**: `/clear`
 
 ### `/stats`
-- **説明**: データベースの統計情報を表示
+- **説明**: データベースとトークン使用量の統計
 - **使用例**: `/stats`
 
 ## 🔧 設定管理
@@ -371,12 +456,8 @@ async def show_help():
 - **使用例**: `/setkey sk-proj-xxxxxxxxxxxxx`
 
 ### `/setmodel [モデル名]`
-- **説明**: デフォルトのGPTモデルを変更
+- **説明**: デフォルトのGPTモデルを変更（全セッション）
 - **使用例**: `/setmodel gpt-4o-mini`
-
-### `/setproxy [URL]`
-- **説明**: HTTP/HTTPSプロキシを設定
-- **使用例**: `/setproxy http://proxy.example.com:8080`
 
 ### `/models`
 - **説明**: 利用可能なGPTモデルの一覧を取得
@@ -384,16 +465,16 @@ async def show_help():
 
 ## 💡 クイックスタート
 
-1️⃣ APIキーを設定: `/setkey sk-proj-xxx`
-2️⃣ 接続テスト: `/test`
-3️⃣ モデルを選択: `/setmodel gpt-4o-mini`
-4️⃣ 新しいセッション: `/clear`
-5️⃣ セッション一覧: `/sessions`
+1️⃣ システムプロンプトを設定: `/system プログラミングの専門家として回答して`
+2️⃣ モデルを選択: `/model gpt-4o`
+3️⃣ 質問する: 「Pythonでフィボナッチ数列を生成するには？」
 
-## ℹ️ ヒント
-- セッションはすべてSQLiteデータベースに保存されます
-- アプリを再起動しても履歴は保持されます
-- セッションIDの最初の8文字を入力すれば切り替え可能
+## ℹ️ Phase 4の新機能
+- 🎯 実際のAI応答機能
+- 📊 トークン使用量の追跡
+- 🔄 ストリーミング応答
+- 🎨 自動タイトル生成
+- 💬 システムプロンプトのカスタマイズ
     """
     
     await cl.Message(content=help_message, author="System").send()
@@ -502,22 +583,31 @@ async def show_statistics():
     stats = await session_handler.get_statistics()
     
     db_size_mb = stats['db_size'] / (1024 * 1024)
+    total_tokens = cl.user_session.get("total_tokens", 0)
+    
+    # 概算コスト計算（GPT-4o-miniベース）
+    estimated_cost = total_tokens * 0.00000045  # 平均的な見積もり
     
     stats_message = f"""
-# 📊 データベース統計
+# 📊 統計情報
 
-## 概要
+## データベース
 - **セッション数**: {stats['session_count']}
 - **メッセージ総数**: {stats['message_count']}
 - **ペルソナ数**: {stats['persona_count']}
 - **データベースサイズ**: {db_size_mb:.2f} MB
-
-## 最終更新
-- **最後のセッション**: {stats.get('last_session_date', 'なし')}
+- **最終更新**: {stats.get('last_session_date', 'なし')}
 
 ## 現在のセッション
 - **ID**: `{cl.user_session.get("session_id", "なし")[:8] if cl.user_session.get("session_id") else "なし"}...`
 - **メッセージ数**: {cl.user_session.get("message_count", 0)}
+- **使用トークン**: {total_tokens}
+- **推定コスト**: ${estimated_cost:.4f}
+
+## システムプロンプト
+```
+{cl.user_session.get("system_prompt", "未設定")}
+```
     """
     
     await cl.Message(content=stats_message, author="System").send()
@@ -538,6 +628,8 @@ async def start_new_session():
     # セッション情報を更新
     cl.user_session.set("session_id", session_id)
     cl.user_session.set("message_count", 0)
+    cl.user_session.set("total_tokens", 0)
+    cl.user_session.set("system_prompt", "")
     
     await cl.Message(
         content=f"""
@@ -554,19 +646,22 @@ async def start_new_session():
 
 async def test_connection():
     """API接続テストを実行"""
-    # ローディングメッセージ
     msg = cl.Message(content="🔄 接続テスト中...", author="System")
     await msg.send()
     
-    # 接続テスト実行
     success, message, models = await config_manager.test_connection()
     
     if success:
+        # 簡単なチャットテストも実行
+        test_success, test_message = await config_manager.test_simple_completion()
+        
         models_text = "\n".join([f"  - {model}" for model in (models[:5] if models else [])])
         result_message = f"""
 ✅ **接続テスト成功！**
 
 {message}
+
+**チャットテスト**: {test_message if test_success else "失敗"}
 
 **利用可能なモデル（上位5個）:**
 {models_text}
@@ -585,7 +680,6 @@ async def test_connection():
 3. OpenAI APIの利用制限に達していないか
         """
     
-    # 結果を更新
     msg.content = result_message
     await msg.update()
 
@@ -600,6 +694,7 @@ async def show_status():
 **基本設定:**
 - **APIキー**: {settings.get('OPENAI_API_KEY_DISPLAY', '未設定')}
 - **デフォルトモデル**: {settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}
+- **現在のセッションモデル**: {cl.user_session.get('settings', {}).get('DEFAULT_MODEL', 'gpt-4o-mini')}
 - **データベース**: {settings.get('DB_PATH', 'chat_history.db')}
 
 **ネットワーク設定:**
@@ -633,11 +728,13 @@ async def list_models():
 {models_text}
 
 **推奨モデル:**
-- `gpt-4o-mini` - 高速で低コスト
+- `gpt-4o-mini` - 高速で低コスト（推奨）
 - `gpt-4o` - 最新の高性能モデル
 - `gpt-4-turbo` - バランス型
 
-モデルを変更するには: `/setmodel [モデル名]`
+モデルを変更するには: 
+- `/model [モデル名]` - このセッションのみ
+- `/setmodel [モデル名]` - デフォルト設定
         """
     else:
         result_message = "❌ モデル一覧の取得に失敗しました。APIキーと接続を確認してください。"
