@@ -1,9 +1,9 @@
 """
-Phase 4: 基本的なチャット機能を含むChainlitアプリケーション
-- OpenAI Responses APIの実装
-- ストリーミング応答
-- メッセージ履歴管理
-- 実際のAI応答機能
+Phase 5: セッション永続化を強化したChainlitアプリケーション
+- 会話履歴の完全な管理
+- セッション検索機能
+- 会話の再開と継続
+- タグ機能
 """
 
 import chainlit as cl
@@ -25,7 +25,7 @@ load_dotenv()
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
-VERSION = "0.4.0 (Phase 4)"
+VERSION = "0.5.0 (Phase 5)"
 
 
 @cl.on_chat_start
@@ -36,21 +36,29 @@ async def on_chat_start():
     # 設定を読み込み
     settings = config_manager.get_all_settings()
     
-    # 新しいセッションを作成
-    session_id = await session_handler.create_session(
-        title=f"Chat - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        chat_type="responses",
-        model=settings.get('DEFAULT_MODEL', 'gpt-4o-mini'),
-        system_prompt=""
-    )
+    # 最近のセッションを確認
+    recent_sessions = await session_handler.list_sessions(limit=1)
     
-    # セッション情報の初期化
-    cl.user_session.set("phase", "4")
-    cl.user_session.set("app_name", APP_NAME)
-    cl.user_session.set("settings", settings)
-    cl.user_session.set("session_id", session_id)
-    cl.user_session.set("message_count", 0)
-    cl.user_session.set("total_tokens", 0)
+    # 新しいセッションを作成するか、最近のセッションを再開するか選択
+    if recent_sessions:
+        last_session = recent_sessions[0]
+        # 最後のセッションが今日で、メッセージが少ない場合は再開を提案
+        last_date = datetime.fromisoformat(last_session['created_at'].replace(' ', 'T')) if isinstance(last_session['created_at'], str) else last_session['created_at']
+        if isinstance(last_date, str):
+            last_date = datetime.fromisoformat(last_date.replace(' ', 'T'))
+        
+        message_count = await session_handler.get_message_count(last_session['id'])
+        
+        # 今日のセッションでメッセージが10未満なら再開を提案
+        if last_date.date() == datetime.now().date() and message_count < 10:
+            session_id = last_session['id']
+            await resume_session(session_id, silent=True)
+        else:
+            # 新しいセッションを作成
+            session_id = await create_new_session(settings)
+    else:
+        # 新しいセッションを作成
+        session_id = await create_new_session(settings)
     
     # ウェルカムメッセージの作成
     api_status = "✅ 設定済み" if settings.get("OPENAI_API_KEY") and settings["OPENAI_API_KEY"] != "your_api_key_here" else "⚠️ 未設定"
@@ -71,20 +79,20 @@ async def on_chat_start():
 
 ## 🔧 利用可能なコマンド
 - `/help` - コマンド一覧とヘルプを表示
-- `/model [モデル名]` - このセッションのモデルを変更
-- `/system [プロンプト]` - システムプロンプトを設定
-- `/clear` - 新しいセッションを開始
-- `/sessions` - セッション一覧を表示
-- `/stats` - データベース統計を表示
+- `/search [キーワード]` - セッションを検索
+- `/recent` - 最近のセッション表示
+- `/resume` - 最後のセッションを再開
+- `/tag [タグ名]` - セッションにタグを追加
+- `/export` - 現在のセッションをエクスポート
 
-💡 **ヒント**: まずは `/help` でコマンドの詳細を確認してください！
+💡 **ヒント**: `/recent` で最近の会話を確認できます！
 
-## 📝 Phase 4の新機能
-- ✅ **OpenAI Responses API統合**
-- ✅ **ストリーミング応答**
-- ✅ **実際のAI応答機能**
-- ✅ **トークンカウント**
-- ✅ **自動タイトル生成**
+## 📝 Phase 5の新機能
+- ✅ **セッション検索機能**
+- ✅ **会話の自動再開**
+- ✅ **タグ管理**
+- ✅ **エクスポート機能（簡易版）**
+- ✅ **詳細な履歴管理**
 
 ---
 **AIと会話を始めましょう！** 何でも質問してください。
@@ -99,11 +107,82 @@ async def on_chat_start():
             author="System"
         ).send()
     else:
-        # APIキーが設定されている場合は簡単なテストメッセージ
-        await cl.Message(
-            content="✨ **準備完了！** AIと会話できます。例：「こんにちは」「Pythonについて教えて」",
-            author="System"
-        ).send()
+        # 最近のセッション情報を表示
+        if recent_sessions:
+            await show_recent_sessions(limit=3)
+
+
+async def create_new_session(settings: Dict) -> str:
+    """新しいセッションを作成"""
+    session_id = await session_handler.create_session(
+        title=f"Chat - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        chat_type="responses",
+        model=settings.get('DEFAULT_MODEL', 'gpt-4o-mini'),
+        system_prompt=""
+    )
+    
+    # セッション情報の初期化
+    cl.user_session.set("phase", "5")
+    cl.user_session.set("app_name", APP_NAME)
+    cl.user_session.set("settings", settings)
+    cl.user_session.set("session_id", session_id)
+    cl.user_session.set("message_count", 0)
+    cl.user_session.set("total_tokens", 0)
+    cl.user_session.set("tags", [])
+    
+    return session_id
+
+
+async def resume_session(session_id: str, silent: bool = False):
+    """セッションを再開"""
+    session = await session_handler.get_session(session_id)
+    if not session:
+        if not silent:
+            await cl.Message(
+                content=f"❌ セッション `{session_id}` が見つかりません。",
+                author="System"
+            ).send()
+        return False
+    
+    # セッション情報を復元
+    cl.user_session.set("session_id", session_id)
+    cl.user_session.set("message_count", await session_handler.get_message_count(session_id))
+    
+    # タグを復元
+    tags = session.get('tags', '')
+    cl.user_session.set("tags", tags.split(',') if tags else [])
+    
+    # システムプロンプトを復元
+    cl.user_session.set("system_prompt", session.get('system_prompt', ''))
+    
+    # モデル設定を復元
+    settings = cl.user_session.get("settings", {})
+    settings["DEFAULT_MODEL"] = session.get('model', 'gpt-4o-mini')
+    cl.user_session.set("settings", settings)
+    
+    if not silent:
+        # 最近のメッセージを表示
+        messages = await session_handler.get_messages(session_id, limit=3)
+        
+        response = f"""
+✅ セッションを再開しました
+
+**タイトル**: {session['title']}
+**ID**: `{session_id[:8]}...`
+**モデル**: {session.get('model', 'Unknown')}
+**タグ**: {', '.join(cl.user_session.get("tags", [])) or 'なし'}
+
+## 最近のメッセージ
+"""
+        
+        for msg in messages[-3:]:
+            role_icon = "👤" if msg['role'] == 'user' else "🤖"
+            content_preview = msg['content'][:100] + "..." if len(msg['content']) > 100 else msg['content']
+            response += f"\n{role_icon} {content_preview}"
+        
+        await cl.Message(content=response, author="System").send()
+    
+    return True
 
 
 @cl.on_message
@@ -140,12 +219,15 @@ async def on_message(message: cl.Message):
         count = cl.user_session.get("message_count", 0) + 1
         cl.user_session.set("message_count", count)
     
-    # メッセージ履歴を取得
+    # メッセージ履歴を取得（コンテキスト管理）
     messages = []
     if session_id:
-        db_messages = await session_handler.get_messages(session_id)
+        # 最大20メッセージまで取得（コンテキストウィンドウ管理）
+        db_messages = await session_handler.get_messages(session_id, limit=20)
+        
+        # 古いメッセージを要約（将来の実装）
         messages = response_handler.format_messages_for_api(
-            db_messages,
+            db_messages[-20:],  # 最新20メッセージ
             system_prompt=cl.user_session.get("system_prompt", "")
         )
     
@@ -171,7 +253,9 @@ async def on_message(message: cl.Message):
         ):
             # エラーチェック
             if "error" in chunk:
-                await cl.Message(content=f"❌ エラー: {chunk['error']}").send()
+                error_msg = f"❌ エラー: {chunk['error']}"
+                ai_message = cl.Message(content=error_msg)
+                await ai_message.send()
                 return
             
             # ストリーミングコンテンツを処理
@@ -187,10 +271,8 @@ async def on_message(message: cl.Message):
             if "usage" in chunk:
                 token_usage = chunk["usage"]
         
-        # 最終的なメッセージを更新
-        # await cl.Message(content=full_response).send()
+        # ストリーミング完了
         await ai_message.update()
-
         
         # レスポンスをデータベースに保存
         if session_id and full_response:
@@ -201,24 +283,18 @@ async def on_message(message: cl.Message):
                 token_usage=token_usage
             )
         
-        # トークン使用量を表示
+        # トークン使用量を表示（簡略化）
         if token_usage:
-            usage_text = response_handler.format_token_usage(token_usage)
             total_tokens = cl.user_session.get("total_tokens", 0) + token_usage.get("total_tokens", 0)
             cl.user_session.set("total_tokens", total_tokens)
-            
-            await cl.Message(
-                content=f"{usage_text}\n📈 セッション合計: {total_tokens} トークン",
-                author="System"
-            ).send()
         
         # 最初のメッセージの場合、タイトルを自動生成
         if cl.user_session.get("message_count", 0) == 1:
-            # 非同期でタイトルを生成（UIをブロックしない）
             asyncio.create_task(auto_generate_title(session_id, messages))
     
     except Exception as e:
-        await cl.Message(content=f"❌ エラーが発生しました: {str(e)}").send()
+        error_msg = f"❌ エラーが発生しました: {str(e)}"
+        await cl.Message(content=error_msg, author="System").send()
         print(f"Error in on_message: {e}")
 
 
@@ -240,13 +316,43 @@ async def handle_command(command: str):
     cmd = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
     
-    if cmd == "/help":
+    # Phase 5の新コマンド
+    if cmd == "/search":
+        if not args:
+            await cl.Message(
+                content="❌ 使用方法: `/search [キーワード]`",
+                author="System"
+            ).send()
+            return
+        await search_sessions(args)
+    
+    elif cmd == "/recent":
+        await show_recent_sessions()
+    
+    elif cmd == "/resume":
+        await resume_last_session()
+    
+    elif cmd == "/tag":
+        if not args:
+            await cl.Message(
+                content="❌ 使用方法: `/tag [タグ名]` または `/tag` でタグ一覧",
+                author="System"
+            ).send()
+            await show_tags()
+            return
+        await add_tag(args)
+    
+    elif cmd == "/export":
+        await export_session()
+    
+    # 既存のコマンド
+    elif cmd == "/help":
         await show_help()
     
     elif cmd == "/model":
         if not args:
             await cl.Message(
-                content="❌ 使用方法: `/model gpt-4o-mini`\n利用可能: gpt-4o-mini, gpt-4o, gpt-4-turbo, gpt-3.5-turbo",
+                content="❌ 使用方法: `/model gpt-4o-mini`",
                 author="System"
             ).send()
             return
@@ -282,6 +388,7 @@ async def handle_command(command: str):
     elif cmd == "/clear":
         await start_new_session()
     
+    # 設定系コマンド
     elif cmd == "/setkey":
         if not args:
             await cl.Message(
@@ -289,58 +396,7 @@ async def handle_command(command: str):
                 author="System"
             ).send()
             return
-        
-        # APIキーを設定
-        success = config_manager.set_api_key(args)
-        if success:
-            # セッション設定を更新
-            new_settings = config_manager.get_all_settings()
-            cl.user_session.set("settings", new_settings)
-            
-            # response_handlerのAPIキーも更新
-            response_handler.update_api_key(args)
-            
-            await cl.Message(
-                content="✅ APIキーを設定しました",
-                author="System"
-            ).send()
-            
-            # 自動で接続テスト
-            await test_connection()
-        else:
-            await cl.Message(
-                content="❌ APIキーの設定に失敗しました",
-                author="System"
-            ).send()
-    
-    elif cmd == "/setmodel":
-        if not args:
-            await cl.Message(
-                content="❌ 使用方法: `/setmodel gpt-4o-mini`\n利用可能: gpt-4o-mini, gpt-4o, gpt-4-turbo, gpt-3.5-turbo",
-                author="System"
-            ).send()
-            return
-        
-        # デフォルトモデルを変更
-        os.environ["DEFAULT_MODEL"] = args
-        success = config_manager.save_config({"DEFAULT_MODEL": args})
-        if success:
-            # 設定を再読み込みしてセッションを更新
-            new_settings = config_manager.get_all_settings()
-            cl.user_session.set("settings", new_settings)
-            
-            # response_handlerのモデルも更新
-            response_handler.update_model(args)
-            
-            await cl.Message(
-                content=f"✅ デフォルトモデルを {args} に設定しました",
-                author="System"
-            ).send()
-        else:
-            await cl.Message(
-                content="❌ モデルの設定に失敗しました",
-                author="System"
-            ).send()
+        await set_api_key(args)
     
     elif cmd == "/test":
         await test_connection()
@@ -348,43 +404,351 @@ async def handle_command(command: str):
     elif cmd == "/status":
         await show_status()
     
-    elif cmd == "/models":
-        await list_models()
-    
     else:
         await cl.Message(
-            content=f"""
-❓ 不明なコマンド: {cmd}
-
-`/help` で利用可能なコマンドを確認できます。
-            """,
+            content=f"❓ 不明なコマンド: {cmd}\n\n`/help` で利用可能なコマンドを確認できます。",
             author="System"
         ).send()
 
 
-async def change_session_model(model: str):
-    """現在のセッションのモデルを変更"""
+# === Phase 5 新機能 ===
+
+async def search_sessions(keyword: str):
+    """セッションを検索"""
+    sessions = await session_handler.list_sessions(limit=50, search=keyword)
+    
+    if not sessions:
+        await cl.Message(
+            content=f"🔍 「{keyword}」に一致するセッションが見つかりません。",
+            author="System"
+        ).send()
+        return
+    
+    result = f"# 🔍 検索結果: 「{keyword}」\n\n"
+    for i, session in enumerate(sessions[:10], 1):
+        created = session.get('created_at', 'Unknown')
+        tags = session.get('tags', '')
+        result += f"""
+{i}. **{session['title']}**
+   - ID: `{session['id'][:8]}...`
+   - タグ: {tags or 'なし'}
+   - 作成: {created}
+"""
+    
+    result += f"\n💡 合計 {len(sessions)} 件見つかりました（上位10件表示）"
+    result += "\n💡 切り替え: `/session [ID最初の8文字]`"
+    
+    await cl.Message(content=result, author="System").send()
+
+
+async def show_recent_sessions(limit: int = 5):
+    """最近のセッションを表示"""
+    sessions = await session_handler.list_sessions(limit=limit)
+    
+    if not sessions:
+        await cl.Message(
+            content="📭 セッションがありません。",
+            author="System"
+        ).send()
+        return
+    
+    current_id = cl.user_session.get("session_id")
+    
+    result = f"# 📅 最近のセッション（{limit}件）\n\n"
+    for i, session in enumerate(sessions, 1):
+        is_current = "⭐ " if session['id'] == current_id else ""
+        msg_count = await session_handler.get_message_count(session['id'])
+        tags = session.get('tags', '')
+        
+        result += f"""
+{i}. {is_current}**{session['title']}**
+   - 💬 {msg_count} メッセージ
+   - 🏷️ {tags or 'タグなし'}
+   - 📅 {session.get('updated_at', session.get('created_at', 'Unknown'))}
+"""
+    
+    result += "\n💡 再開: `/resume` または `/session [ID]`"
+    
+    await cl.Message(content=result, author="System").send()
+
+
+async def resume_last_session():
+    """最後のセッションを再開"""
+    sessions = await session_handler.list_sessions(limit=1)
+    
+    if not sessions:
+        await cl.Message(
+            content="📭 再開できるセッションがありません。",
+            author="System"
+        ).send()
+        return
+    
+    last_session = sessions[0]
+    await resume_session(last_session['id'])
+
+
+async def add_tag(tag: str):
+    """セッションにタグを追加"""
     session_id = cl.user_session.get("session_id")
-    if session_id:
-        # セッション設定を更新
-        settings = cl.user_session.get("settings", {})
-        settings["DEFAULT_MODEL"] = model
-        cl.user_session.set("settings", settings)
+    if not session_id:
+        await cl.Message(
+            content="❌ アクティブなセッションがありません。",
+            author="System"
+        ).send()
+        return
+    
+    # 現在のタグを取得
+    tags = cl.user_session.get("tags", [])
+    
+    # タグを追加（重複チェック）
+    if tag not in tags:
+        tags.append(tag)
+        cl.user_session.set("tags", tags)
+        
+        # データベースに保存
+        await session_handler.update_session(session_id, tags=tags)
         
         await cl.Message(
-            content=f"✅ このセッションのモデルを {model} に変更しました",
+            content=f"✅ タグ「{tag}」を追加しました。\n現在のタグ: {', '.join(tags)}",
             author="System"
         ).send()
     else:
         await cl.Message(
-            content="❌ アクティブなセッションがありません",
+            content=f"ℹ️ タグ「{tag}」は既に追加されています。\n現在のタグ: {', '.join(tags)}",
             author="System"
         ).send()
+
+
+async def show_tags():
+    """現在のタグを表示"""
+    tags = cl.user_session.get("tags", [])
+    if tags:
+        await cl.Message(
+            content=f"🏷️ 現在のタグ: {', '.join(tags)}",
+            author="System"
+        ).send()
+    else:
+        await cl.Message(
+            content="🏷️ タグが設定されていません。",
+            author="System"
+        ).send()
+
+
+async def export_session():
+    """セッションをエクスポート（簡易版）"""
+    session_id = cl.user_session.get("session_id")
+    if not session_id:
+        await cl.Message(
+            content="❌ アクティブなセッションがありません。",
+            author="System"
+        ).send()
+        return
+    
+    # セッション情報を取得
+    session = await session_handler.get_session(session_id)
+    messages = await session_handler.get_messages(session_id)
+    
+    # JSON形式でエクスポート
+    export_data = {
+        "session": {
+            "id": session['id'],
+            "title": session['title'],
+            "model": session.get('model', 'unknown'),
+            "created_at": str(session.get('created_at', '')),
+            "tags": session.get('tags', '').split(',') if session.get('tags') else []
+        },
+        "messages": [
+            {
+                "role": msg['role'],
+                "content": msg['content'],
+                "created_at": str(msg.get('created_at', ''))
+            }
+            for msg in messages
+        ],
+        "statistics": {
+            "message_count": len(messages),
+            "total_tokens": cl.user_session.get("total_tokens", 0)
+        }
+    }
+    
+    # JSON文字列に変換
+    json_str = json.dumps(export_data, ensure_ascii=False, indent=2)
+    
+    # 結果を表示
+    result = f"""
+# 📤 セッションエクスポート
+
+**タイトル**: {session['title']}
+**メッセージ数**: {len(messages)}
+**形式**: JSON
+
+## エクスポートデータ（最初の500文字）
+```json
+{json_str[:500]}...
+```
+
+💡 **Phase 11で完全なエクスポート機能を実装予定**
+- PDF形式
+- HTML形式
+- ファイルダウンロード
+"""
+    
+    await cl.Message(content=result, author="System").send()
+
+
+# === 既存機能の改善 ===
+
+async def show_help():
+    """コマンドヘルプを表示（Phase 5対応）"""
+    help_message = f"""
+# 📚 コマンドヘルプ (Phase 5)
+
+## 🔍 検索・履歴機能（新機能）
+
+### `/search [キーワード]`
+- **説明**: セッションをキーワードで検索
+- **使用例**: `/search Python`
+- **検索対象**: タイトル、タグ
+
+### `/recent`
+- **説明**: 最近のセッション5件を表示
+- **使用例**: `/recent`
+
+### `/resume`
+- **説明**: 最後のセッションを再開
+- **使用例**: `/resume`
+
+### `/tag [タグ名]`
+- **説明**: 現在のセッションにタグを追加
+- **使用例**: `/tag 重要`
+- **一覧表示**: `/tag` （引数なし）
+
+### `/export`
+- **説明**: セッションをJSON形式でエクスポート（簡易版）
+- **使用例**: `/export`
+
+## 🤖 AI設定コマンド
+
+### `/model [モデル名]`
+- **説明**: このセッションで使用するモデルを変更
+- **使用例**: `/model gpt-4o`
+
+### `/system [プロンプト]`
+- **説明**: システムプロンプトを設定
+- **使用例**: `/system プログラミングの専門家として`
+
+## 🗂️ セッション管理
+
+### `/sessions`
+- **説明**: セッション一覧を表示
+- **使用例**: `/sessions`
+
+### `/session [ID]`
+- **説明**: 特定のセッションに切り替え
+- **使用例**: `/session abc123de`
+
+### `/rename [タイトル]`
+- **説明**: セッションのタイトルを変更
+- **使用例**: `/rename AI学習ノート`
+
+### `/clear`
+- **説明**: 新しいセッションを開始
+- **使用例**: `/clear`
+
+### `/stats`
+- **説明**: 統計情報を表示
+- **使用例**: `/stats`
+
+## 💡 Phase 5のポイント
+
+**効率的な会話管理**:
+1. `/recent` で最近の会話を確認
+2. `/resume` ですぐに前回の続きから
+3. `/search Python` で過去の学習内容を検索
+4. `/tag 重要` でセッションを分類
+
+**コンテキスト管理**:
+- 最大20メッセージまで記憶
+- 古いメッセージは自動的に要約（今後実装）
+- セッション間の切り替えが高速化
+"""
+    
+    await cl.Message(content=help_message, author="System").send()
+
+
+async def show_statistics():
+    """統計情報を表示（改善版）"""
+    stats = await session_handler.get_statistics()
+    session_id = cl.user_session.get("session_id")
+    
+    db_size_mb = stats['db_size'] / (1024 * 1024)
+    total_tokens = cl.user_session.get("total_tokens", 0)
+    
+    # タグ統計を計算
+    all_sessions = await session_handler.list_sessions(limit=100)
+    tag_counts = {}
+    for session in all_sessions:
+        tags = session.get('tags', '').split(',') if session.get('tags') else []
+        for tag in tags:
+            if tag:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    
+    # 人気タグTop5
+    popular_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    
+    stats_message = f"""
+# 📊 統計情報
+
+## データベース
+- **総セッション数**: {stats['session_count']}
+- **総メッセージ数**: {stats['message_count']}
+- **データベースサイズ**: {db_size_mb:.2f} MB
+- **最終更新**: {stats.get('last_session_date', 'なし')}
+
+## 現在のセッション
+- **ID**: `{session_id[:8] if session_id else 'なし'}...`
+- **メッセージ数**: {cl.user_session.get("message_count", 0)}
+- **使用トークン**: {total_tokens:,}
+- **タグ**: {', '.join(cl.user_session.get("tags", [])) or 'なし'}
+
+## タグ統計
+**人気タグ Top5**:
+"""
+    
+    for i, (tag, count) in enumerate(popular_tags, 1):
+        stats_message += f"\n{i}. {tag} ({count}回)"
+    
+    if not popular_tags:
+        stats_message += "\nまだタグが使用されていません"
+    
+    await cl.Message(content=stats_message, author="System").send()
+
+
+# === 既存機能（簡略化） ===
+
+async def change_session_model(model: str):
+    """セッションモデルを変更"""
+    settings = cl.user_session.get("settings", {})
+    settings["DEFAULT_MODEL"] = model
+    cl.user_session.set("settings", settings)
+    
+    session_id = cl.user_session.get("session_id")
+    if session_id:
+        await session_handler.update_session(session_id, model=model)
+    
+    await cl.Message(
+        content=f"✅ このセッションのモデルを {model} に変更しました",
+        author="System"
+    ).send()
 
 
 async def set_system_prompt(prompt: str):
     """システムプロンプトを設定"""
     cl.user_session.set("system_prompt", prompt)
+    
+    session_id = cl.user_session.get("session_id")
+    if session_id:
+        await session_handler.update_session(session_id, system_prompt=prompt)
     
     if prompt:
         await cl.Message(
@@ -398,120 +762,13 @@ async def set_system_prompt(prompt: str):
         ).send()
 
 
-async def show_help():
-    """コマンドヘルプを表示"""
-    help_message = f"""
-# 📚 コマンドヘルプ (Phase 4)
-
-## 🤖 AI設定コマンド（新機能）
-
-### `/model [モデル名]`
-- **説明**: このセッションで使用するモデルを変更
-- **使用例**: `/model gpt-4o`
-- **選択肢**: gpt-4o-mini, gpt-4o, gpt-4-turbo, gpt-3.5-turbo
-
-### `/system [プロンプト]`
-- **説明**: システムプロンプトを設定（AIの振る舞いを定義）
-- **使用例**: `/system あなたは親切なアシスタントです`
-- **クリア**: `/system` （引数なしでクリア）
-
-## 🗂️ セッション管理
-
-### `/sessions`
-- **説明**: 保存されているセッション一覧を表示
-- **使用例**: `/sessions`
-
-### `/session [ID]`
-- **説明**: 指定したセッションに切り替え
-- **使用例**: `/session abc123def456`
-
-### `/rename [タイトル]`
-- **説明**: 現在のセッションのタイトルを変更
-- **使用例**: `/rename Python学習`
-
-### `/clear`
-- **説明**: 新しいセッションを開始
-- **使用例**: `/clear`
-
-### `/stats`
-- **説明**: データベースとトークン使用量の統計
-- **使用例**: `/stats`
-
-## 🔧 設定管理
-
-### `/help`
-- **説明**: このヘルプを表示
-- **使用例**: `/help`
-
-### `/test`
-- **説明**: OpenAI APIとの接続をテスト
-- **使用例**: `/test`
-
-### `/status`
-- **説明**: 現在のすべての設定を表示
-- **使用例**: `/status`
-
-### `/setkey [APIキー]`
-- **説明**: OpenAI APIキーを設定
-- **使用例**: `/setkey sk-proj-xxxxxxxxxxxxx`
-
-### `/setmodel [モデル名]`
-- **説明**: デフォルトのGPTモデルを変更（全セッション）
-- **使用例**: `/setmodel gpt-4o-mini`
-
-### `/models`
-- **説明**: 利用可能なGPTモデルの一覧を取得
-- **使用例**: `/models`
-
-## 💡 クイックスタート
-
-1️⃣ システムプロンプトを設定: `/system プログラミングの専門家として回答して`
-2️⃣ モデルを選択: `/model gpt-4o`
-3️⃣ 質問する: 「Pythonでフィボナッチ数列を生成するには？」
-
-## ℹ️ Phase 4の新機能
-- 🎯 実際のAI応答機能
-- 📊 トークン使用量の追跡
-- 🔄 ストリーミング応答
-- 🎨 自動タイトル生成
-- 💬 システムプロンプトのカスタマイズ
-    """
-    
-    await cl.Message(content=help_message, author="System").send()
-
-
 async def show_sessions():
     """セッション一覧を表示"""
-    sessions = await session_handler.list_sessions(limit=10)
-    
-    if not sessions:
-        await cl.Message(
-            content="📭 セッションがありません。新しいチャットを始めてください。",
-            author="System"
-        ).send()
-        return
-    
-    current_session_id = cl.user_session.get("session_id")
-    
-    sessions_text = "# 📋 セッション一覧\n\n"
-    for i, session in enumerate(sessions, 1):
-        is_current = "⭐ " if session['id'] == current_session_id else ""
-        created = session.get('created_at', 'Unknown')
-        sessions_text += f"""
-{i}. {is_current}**{session['title']}**
-   - ID: `{session['id'][:8]}...`
-   - モデル: {session.get('model', 'Unknown')}
-   - 作成日時: {created}
-"""
-    
-    sessions_text += "\n💡 **切り替え方法**: `/session [ID最初の8文字]`"
-    
-    await cl.Message(content=sessions_text, author="System").send()
+    await show_recent_sessions(10)
 
 
 async def switch_session(session_id: str):
     """セッションを切り替え"""
-    # 短縮IDでも検索可能に
     sessions = await session_handler.list_sessions()
     target_session = None
     
@@ -520,41 +777,17 @@ async def switch_session(session_id: str):
             target_session = session
             break
     
-    if not target_session:
+    if target_session:
+        await resume_session(target_session['id'])
+    else:
         await cl.Message(
             content=f"❌ セッション `{session_id}` が見つかりません。",
             author="System"
         ).send()
-        return
-    
-    # セッションを切り替え
-    cl.user_session.set("session_id", target_session['id'])
-    
-    # メッセージ履歴を取得
-    messages = await session_handler.get_messages(target_session['id'], limit=5)
-    message_count = await session_handler.get_message_count(target_session['id'])
-    cl.user_session.set("message_count", message_count)
-    
-    response = f"""
-✅ セッションを切り替えました
-
-**タイトル**: {target_session['title']}
-**ID**: `{target_session['id'][:8]}...`
-**メッセージ数**: {message_count}
-
-## 最近のメッセージ
-"""
-    
-    for msg in messages[-5:]:
-        role_icon = "👤" if msg['role'] == 'user' else "🤖"
-        content_preview = msg['content'][:100] + "..." if len(msg['content']) > 100 else msg['content']
-        response += f"\n{role_icon} {content_preview}"
-    
-    await cl.Message(content=response, author="System").send()
 
 
 async def rename_session(new_title: str):
-    """現在のセッションをリネーム"""
+    """セッションをリネーム"""
     session_id = cl.user_session.get("session_id")
     
     if not session_id:
@@ -571,65 +804,12 @@ async def rename_session(new_title: str):
             content=f"✅ セッションタイトルを「{new_title}」に変更しました。",
             author="System"
         ).send()
-    else:
-        await cl.Message(
-            content="❌ タイトルの変更に失敗しました。",
-            author="System"
-        ).send()
-
-
-async def show_statistics():
-    """データベース統計を表示"""
-    stats = await session_handler.get_statistics()
-    
-    db_size_mb = stats['db_size'] / (1024 * 1024)
-    total_tokens = cl.user_session.get("total_tokens", 0)
-    
-    # 概算コスト計算（GPT-4o-miniベース）
-    estimated_cost = total_tokens * 0.00000045  # 平均的な見積もり
-    
-    stats_message = f"""
-# 📊 統計情報
-
-## データベース
-- **セッション数**: {stats['session_count']}
-- **メッセージ総数**: {stats['message_count']}
-- **ペルソナ数**: {stats['persona_count']}
-- **データベースサイズ**: {db_size_mb:.2f} MB
-- **最終更新**: {stats.get('last_session_date', 'なし')}
-
-## 現在のセッション
-- **ID**: `{cl.user_session.get("session_id", "なし")[:8] if cl.user_session.get("session_id") else "なし"}...`
-- **メッセージ数**: {cl.user_session.get("message_count", 0)}
-- **使用トークン**: {total_tokens}
-- **推定コスト**: ${estimated_cost:.4f}
-
-## システムプロンプト
-```
-{cl.user_session.get("system_prompt", "未設定")}
-```
-    """
-    
-    await cl.Message(content=stats_message, author="System").send()
 
 
 async def start_new_session():
     """新しいセッションを開始"""
     settings = cl.user_session.get("settings", {})
-    
-    # 新しいセッションを作成
-    session_id = await session_handler.create_session(
-        title=f"Chat - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        chat_type="responses",
-        model=settings.get('DEFAULT_MODEL', 'gpt-4o-mini'),
-        system_prompt=""
-    )
-    
-    # セッション情報を更新
-    cl.user_session.set("session_id", session_id)
-    cl.user_session.set("message_count", 0)
-    cl.user_session.set("total_tokens", 0)
-    cl.user_session.set("system_prompt", "")
+    session_id = await create_new_session(settings)
     
     await cl.Message(
         content=f"""
@@ -644,113 +824,58 @@ async def start_new_session():
     ).send()
 
 
+async def set_api_key(api_key: str):
+    """APIキーを設定"""
+    success = config_manager.set_api_key(api_key)
+    if success:
+        new_settings = config_manager.get_all_settings()
+        cl.user_session.set("settings", new_settings)
+        response_handler.update_api_key(api_key)
+        
+        await cl.Message(
+            content="✅ APIキーを設定しました",
+            author="System"
+        ).send()
+        
+        await test_connection()
+
+
 async def test_connection():
-    """API接続テストを実行"""
-    msg = cl.Message(content="🔄 接続テスト中...", author="System")
+    """API接続テスト"""
+    msg = cl.Message(content="🔄 接続テスト中...")
     await msg.send()
     
     success, message, models = await config_manager.test_connection()
     
     if success:
-        # 簡単なチャットテストも実行
         test_success, test_message = await config_manager.test_simple_completion()
-        
-        models_text = "\n".join([f"  - {model}" for model in (models[:5] if models else [])])
-        result_message = f"""
-✅ **接続テスト成功！**
-
-{message}
-
-**チャットテスト**: {test_message if test_success else "失敗"}
-
-**利用可能なモデル（上位5個）:**
-{models_text}
-
-詳細なモデル一覧は `/models` コマンドで確認できます。
-        """
+        result = f"✅ 接続成功！\n{test_message if test_success else '応答テスト失敗'}"
     else:
-        result_message = f"""
-❌ **接続テスト失敗**
-
-{message}
-
-**確認事項:**
-1. APIキーが正しく入力されているか
-2. プロキシ設定が必要な環境かどうか
-3. OpenAI APIの利用制限に達していないか
-        """
+        result = f"❌ 接続失敗: {message}"
     
-    msg.content = result_message
-    await msg.update()
+    await cl.Message(content=result, author="System").send()
 
 
 async def show_status():
-    """現在の設定状態を表示"""
+    """設定状態を表示"""
     settings = config_manager.get_all_settings()
     
     status_message = f"""
-## 📊 現在の設定状態
+## 📊 現在の設定
 
-**基本設定:**
 - **APIキー**: {settings.get('OPENAI_API_KEY_DISPLAY', '未設定')}
-- **デフォルトモデル**: {settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}
-- **現在のセッションモデル**: {cl.user_session.get('settings', {}).get('DEFAULT_MODEL', 'gpt-4o-mini')}
-- **データベース**: {settings.get('DB_PATH', 'chat_history.db')}
-
-**ネットワーク設定:**
-- **HTTPプロキシ**: {settings.get('HTTP_PROXY', '未設定') or '未設定'}
-- **HTTPSプロキシ**: {settings.get('HTTPS_PROXY', '未設定') or '未設定'}
-
-**ベクトルストア設定:**
-- **社内VS ID**: {settings.get('COMPANY_VECTOR_STORE_ID', '未設定') or '未設定'}
-- **個人VS ID**: {settings.get('PERSONAL_VECTOR_STORE_ID', '未設定') or '未設定'}
-
-**サーバー設定:**
-- **ホスト**: {settings.get('CHAINLIT_HOST', '0.0.0.0')}
-- **ポート**: {settings.get('CHAINLIT_PORT', '8000')}
-    """
+- **モデル**: {cl.user_session.get('settings', {}).get('DEFAULT_MODEL', 'gpt-4o-mini')}
+- **セッション**: `{cl.user_session.get('session_id', 'なし')[:8] if cl.user_session.get('session_id') else 'なし'}...`
+- **タグ**: {', '.join(cl.user_session.get("tags", [])) or 'なし'}
+"""
     
     await cl.Message(content=status_message, author="System").send()
 
 
-async def list_models():
-    """利用可能なモデル一覧を取得"""
-    msg = cl.Message(content="🔄 モデル一覧を取得中...", author="System")
-    await msg.send()
-    
-    success, message, models = await config_manager.test_connection()
-    
-    if success and models:
-        models_text = "\n".join([f"{i+1}. {model}" for i, model in enumerate(models)])
-        result_message = f"""
-## 📋 利用可能なGPTモデル
-
-{models_text}
-
-**推奨モデル:**
-- `gpt-4o-mini` - 高速で低コスト（推奨）
-- `gpt-4o` - 最新の高性能モデル
-- `gpt-4-turbo` - バランス型
-
-モデルを変更するには: 
-- `/model [モデル名]` - このセッションのみ
-- `/setmodel [モデル名]` - デフォルト設定
-        """
-    else:
-        result_message = "❌ モデル一覧の取得に失敗しました。APIキーと接続を確認してください。"
-    
-    msg.content = result_message
-    await msg.update()
-
-
 if __name__ == "__main__":
-    # デバッグ情報の出力
     print(f"Starting {APP_NAME} {VERSION}")
-    print(f"Python Path: {os.sys.executable}")
     print(f"Working Directory: {os.getcwd()}")
     
-    # 設定の確認
     current_settings = config_manager.get_all_settings()
     print(f"API Key: {current_settings.get('OPENAI_API_KEY_DISPLAY', 'Not set')}")
     print(f"Default Model: {current_settings.get('DEFAULT_MODEL', 'Not set')}")
-    print(f"Database Path: {current_settings.get('DB_PATH', 'chat_history.db')}")

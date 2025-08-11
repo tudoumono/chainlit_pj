@@ -145,7 +145,9 @@ class SessionHandler:
         session_vs_id: str = None,
         use_company_vs: bool = None,
         use_personal_vs: bool = None,
-        tags: List[str] = None
+        tags: List[str] = None,
+        model: str = None,
+        system_prompt: str = None
     ) -> bool:
         """セッション情報を更新"""
         updates = []
@@ -174,6 +176,14 @@ class SessionHandler:
         if tags is not None:
             updates.append("tags = ?")
             values.append(",".join(tags))
+        
+        if model is not None:
+            updates.append("model = ?")
+            values.append(model)
+        
+        if system_prompt is not None:
+            updates.append("system_prompt = ?")
+            values.append(system_prompt)
         
         if not updates:
             return True
