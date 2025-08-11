@@ -12,6 +12,7 @@ from chainlit.element import ElementDict
 from chainlit.step import StepDict
 from chainlit.user import User
 import json
+import uuid
 
 
 class SimpleDataLayer(BaseDataLayer):
@@ -67,7 +68,16 @@ class SimpleDataLayer(BaseDataLayer):
     
     async def get_thread(self, thread_id: str) -> Optional[ThreadDict]:
         """スレッドを取得"""
-        return self.threads.get(thread_id)
+        thread = self.threads.get(thread_id)
+        if thread:
+            # stepsを追加（ChainlitのUIが期待する形式）
+            thread_steps = []
+            for step_id, step in self.steps.items():
+                if step.get("threadId") == thread_id:
+                    thread_steps.append(step)
+            if "steps" not in thread:
+                thread["steps"] = thread_steps
+        return thread
     
     async def delete_thread(self, thread_id: str) -> None:
         """スレッドを削除"""
@@ -84,6 +94,8 @@ class SimpleDataLayer(BaseDataLayer):
         filtered_threads = []
         for thread in self.threads.values():
             if filters.user_id and thread.get("user_id") != filters.user_id:
+                continue
+            if filters.userId and thread.get("userId") != filters.userId:
                 continue
             filtered_threads.append(thread)
         
@@ -133,17 +145,31 @@ class SimpleDataLayer(BaseDataLayer):
         element_id = element.get("id")
         self.elements[element_id] = element
     
-    async def delete_element(self, element_id: str) -> None:
+    async def get_element(self, element_id: str, thread_id: str = None) -> Optional[ElementDict]:
+        """エレメントを取得"""
+        element = self.elements.get(element_id)
+        if element and thread_id:
+            # thread_idが指定されている場合、そのスレッドのエレメントか確認
+            if element.get("threadId") != thread_id:
+                return None
+        return element
+    
+    async def delete_element(self, element_id: str, thread_id: str = None) -> None:
         """エレメントを削除"""
         if element_id in self.elements:
-            del self.elements[element_id]
+            element = self.elements.get(element_id)
+            if thread_id and element:
+                # thread_idが指定されている場合、そのスレッドのエレメントか確認
+                if element.get("threadId") == thread_id:
+                    del self.elements[element_id]
+            else:
+                del self.elements[element_id]
     
     async def upsert_feedback(
         self,
         feedback: Dict,
     ) -> str:
         """フィードバックを作成または更新"""
-        import uuid
         feedback_id = feedback.get("id") or str(uuid.uuid4())
         self.feedbacks[feedback_id] = feedback
         return feedback_id
@@ -152,6 +178,37 @@ class SimpleDataLayer(BaseDataLayer):
         """フィードバックを削除"""
         if feedback_id in self.feedbacks:
             del self.feedbacks[feedback_id]
+    
+    async def build_debug_url(self) -> str:
+        """デバッグURLを構築"""
+        return "http://localhost:8000/debug"
+    
+    # 追加の必須メソッド（BaseDataLayerの要求による）
+    async def list_feedbacks(
+        self,
+        pagination: Pagination,
+        filters: Dict = None,
+    ) -> Pagination:
+        """フィードバック一覧を取得"""
+        feedbacks_list = list(self.feedbacks.values())
+        
+        limit = pagination.first or 20
+        cursor = pagination.cursor or 0
+        
+        paginated_feedbacks = feedbacks_list[cursor:cursor + limit]
+        
+        return {
+            "data": paginated_feedbacks,
+            "pageInfo": {
+                "hasNextPage": cursor + limit < len(feedbacks_list),
+                "startCursor": cursor,
+                "endCursor": cursor + len(paginated_feedbacks)
+            }
+        }
+    
+    async def get_feedback(self, feedback_id: str) -> Optional[Dict]:
+        """フィードバックを取得"""
+        return self.feedbacks.get(feedback_id)
 
 
 # データレイヤーを設定
@@ -159,3 +216,4 @@ import chainlit.data as cl_data
 cl_data._data_layer = SimpleDataLayer()
 
 print("✅ シンプルなインメモリデータレイヤーを設定しました")
+print("📝 注意: 履歴はアプリケーション再起動で消失します")
