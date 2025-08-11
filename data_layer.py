@@ -14,7 +14,7 @@ from chainlit.types import ThreadDict, Pagination, ThreadFilter
 from chainlit.element import ElementDict
 from chainlit.step import StepDict
 from chainlit.user import User
-from chainlit.data.utils import queue_until_user_message
+# from chainlit.data.utils import queue_until_user_message  # この機能は使用しない
 import aiosqlite
 import uuid
 
@@ -263,7 +263,6 @@ class SQLiteDataLayer(BaseDataLayer):
             row = await cursor.fetchone()
             return row["user_identifier"] if row else None
     
-    @queue_until_user_message
     async def create_step(self, step: StepDict) -> None:
         """ステップを作成"""
         async with aiosqlite.connect(self.db_path) as db:
@@ -287,7 +286,6 @@ class SQLiteDataLayer(BaseDataLayer):
             ))
             await db.commit()
     
-    @queue_until_user_message
     async def update_step(self, step: StepDict) -> None:
         """ステップを更新"""
         async with aiosqlite.connect(self.db_path) as db:

@@ -42,7 +42,7 @@ chat_history.db
 logs/
 
 # Chainlit
-.chainlit/
+# .chainlit/
 .files/
 
 # Temporary files
