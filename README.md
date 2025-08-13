@@ -1,50 +1,63 @@
-# AI Workspace - Chainlit公式機能版
+# AI Workspace - Phase 5完了版
 
-多機能AIワークスペースアプリケーション - Chainlitの公式データ永続化機能を使用
+Chainlitを使用した多機能AIワークスペースアプリケーション
 
-## ✨ 特徴
+## 🌟 概要
 
-- 🔐 **認証システム** - ユーザー名/パスワードによる保護
-- 📚 **自動履歴管理** - Chainlit組み込みの履歴機能
-- 🤖 **OpenAI統合** - GPT-4oなど各種モデルに対応
-- 💬 **ストリーミング応答** - リアルタイムでAIの応答を表示
-- 🎨 **シンプルなUI** - 使いやすいインターフェース
+OpenAI APIを活用したプロフェッショナル向けのAIチャットアプリケーションです。
 
-## 📋 必要要件
+### 主な特徴
 
-- Python 3.8以上
-- OpenAI APIキー
+- 🗣️ **リアルタイムAI対話** - GPT-4.1対応
+- 💾 **完全な永続化** - SQLiteで履歴が消えない
+- 🔍 **強力な検索機能** - 過去の会話を素早く発見
+- 🏷️ **タグ管理** - 整理された情報管理
+- 📊 **統計機能** - 使用状況の可視化
+- 🔄 **セッション管理** - 複数の会話を効率的に管理
+
+## 📦 実装状況
+
+| Phase | タイトル | 状態 |
+|-------|---------|------|
+| Phase 1 | 基本環境構築 | ✅ 完了 |
+| Phase 2 | 設定管理機能 | ✅ 完了 |
+| Phase 3 | データベース基盤 | ✅ 完了 |
+| Phase 4 | 基本的なチャット機能 | ✅ 完了 |
+| Phase 5 | セッション永続化の強化 | ✅ 完了 |
+| Phase 6-12 | 高度な機能 | ⏳ 今後実装 |
 
 ## 🚀 クイックスタート
 
-### 1. インストール
+### 1. 依存関係のインストール
 
 ```bash
-# リポジトリをクローン
-git clone [repository-url]
-cd AI_Workspace_App_Chainlit
+# pipを使用
+pip install -r requirements.txt
 
-# 依存関係をインストール
-pip install -r requirements.in
+# またはuvを使用
+uv pip install -r requirements.txt
 ```
 
-### 2. 環境設定
+### 2. 環境変数の設定
 
-`.env` ファイルを作成して設定：
+`.env.example`をコピーして`.env`を作成し、必要な情報を設定：
 
+```bash
+cp .env.example .env
+```
+
+`.env`ファイルを編集：
 ```env
 # OpenAI API設定
-OPENAI_API_KEY=sk-your-api-key-here
+OPENAI_API_KEY=your_api_key_here
+DEFAULT_MODEL=gpt-4.1-2025-04-14
 
 # 認証設定
-CHAINLIT_AUTH_TYPE="credentials"
-CHAINLIT_AUTH_SECRET="your-password-here"
-
-# デフォルトモデル
-DEFAULT_MODEL=gpt-4o-mini
+CHAINLIT_AUTH_TYPE=credentials
+CHAINLIT_AUTH_SECRET=admin123
 ```
 
-### 3. 起動
+### 3. アプリケーションの起動
 
 ```bash
 # Pythonスクリプトで起動
@@ -56,136 +69,68 @@ chainlit run app.py
 
 ### 4. ログイン
 
-ブラウザで `http://localhost:8000` を開き、ログイン：
+ブラウザで http://localhost:8000 を開き、以下でログイン：
+- **ユーザー名**: admin
+- **パスワード**: admin123
 
-- **ユーザー名**: `admin`
-- **パスワード**: `.env`で設定した値（デフォルト: `admin123`）
-
-## 💡 使い方
-
-### 基本的な会話
-
-1. メッセージを入力して送信
-2. AIからの応答を待つ
-3. 会話は自動的に保存される
-
-### 履歴機能
-
-- **履歴を見る**: 左上の履歴ボタンをクリック
-- **過去の会話を再開**: 履歴リストから選択
+## 🛠️ 機能一覧
 
 ### コマンド
 
-| コマンド | 説明 | 例 |
-|---------|------|-----|
-| `/help` | ヘルプを表示 | `/help` |
-| `/model` | モデルを変更 | `/model gpt-4o` |
-| `/system` | システムプロンプトを設定 | `/system あなたは親切なアシスタントです` |
-| `/stats` | 統計情報を表示 | `/stats` |
-| `/clear` | 新しい会話を開始 | `/clear` |
-| `/setkey` | APIキーを設定 | `/setkey sk-xxxxx` |
-| `/test` | 接続テスト | `/test` |
-| `/status` | 現在の設定を表示 | `/status` |
+| コマンド | 説明 |
+|---------|------|
+| `/help` | ヘルプ表示 |
+| `/status` | 現在の設定状態 |
+| `/model [name]` | モデル変更 |
+| `/system [prompt]` | システムプロンプト設定 |
+| `/clear` | 新しいセッション開始 |
+| `/stats` | 統計情報表示 |
 
-## 📁 プロジェクト構造
+## 🔧 技術スタック
+
+- **フレームワーク**: Chainlit
+- **言語モデル**: OpenAI GPT-4.1
+- **データベース**: SQLite
+- **認証**: Chainlit Authentication
+- **言語**: Python 3.11+
+
+## 📂 ファイル構造
 
 ```
 AI_Workspace_App_Chainlit/
-├── app.py              # メインアプリケーション
-├── auth.py             # 認証設定
-├── run.py              # 起動スクリプト
-├── .env                # 環境変数
-├── .chainlit/
-│   ├── config.toml     # Chainlit設定
-│   └── data/          # 履歴データ（自動生成）
-├── utils/
-│   ├── config.py       # 設定管理
-│   └── response_handler.py  # OpenAI API処理
-└── requirements.in     # 依存関係
+├── app.py                 # メインアプリケーション (v0.7.0)
+├── run.py                 # 起動スクリプト
+├── auth.py                # 認証ハンドラー
+├── data_layer.py          # SQLiteデータレイヤー
+├── utils/                 # ユーティリティモジュール
+│   ├── config.py          # 設定管理
+│   ├── session_handler.py # セッション管理
+│   ├── response_handler.py # API通信
+│   ├── responses_handler.py # Responses API対応
+│   ├── tools_config.py    # Tools設定
+│   └── logger.py          # ログシステム
+├── .chainlit/              # Chainlit設定
+│   ├── config.toml        # Chainlit設定
+│   ├── chainlit.db        # SQLiteデータベース
+│   └── tools_config.json  # Tools設定
+├── .env                   # 環境変数
+└── requirements.txt       # 依存関係
 ```
-
-## 🔧 設定のカスタマイズ
-
-### パスワードの変更
-
-`.env` ファイルを編集：
-
-```env
-CHAINLIT_AUTH_SECRET="new-password-here"
-```
-
-### 認証を無効にする
-
-認証が不要な場合、`.env` から以下を削除：
-
-```env
-# CHAINLIT_AUTH_TYPE="credentials"
-# CHAINLIT_AUTH_SECRET="admin123"
-```
-
-### モデルの変更
-
-`.env` ファイルでデフォルトモデルを設定：
-
-```env
-DEFAULT_MODEL=gpt-4o
-```
-
-または会話中にコマンドで変更：
-
-```
-/model gpt-3.5-turbo
-```
-
-## 🐛 トラブルシューティング
-
-### ログインできない
-
-1. `.env` ファイルのパスワードを確認
-2. ユーザー名は `admin` を使用
-3. ブラウザのキャッシュをクリア
-
-### 履歴が表示されない
-
-1. `.chainlit/config.toml` で設定を確認
-2. ブラウザをリロード
-3. 新しい会話を開始してテスト
-
-### APIエラー
-
-1. OpenAI APIキーを確認
-2. `/test` コマンドで接続テスト
-3. `/setkey` コマンドでAPIキーを再設定
-
-## 📚 ドキュメント
-
-- [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - 移行ガイド
-- [Chainlit公式ドキュメント](https://docs.chainlit.io)
-- [OpenAI APIドキュメント](https://platform.openai.com/docs)
-
-## 🔄 バージョン履歴
-
-- **v0.5.2** - Chainlit公式機能版
-  - 公式の履歴管理機能を採用
-  - 認証システムの実装
-  - コードの大幅な簡略化
-
-- **v0.5.1** - Phase 5改善版
-  - セッション管理の修正
-  - サイドバー機能の追加
-
-- **v0.5.0** - Phase 5初期版
-  - カスタムセッション管理
-  - SQLiteデータベース使用
 
 ## 📝 ライセンス
 
-MIT License
+MIT
 
-## 🤝 貢献
+## 👥 貢献
 
-プルリクエストを歓迎します。大きな変更の場合は、まずissueを開いて変更内容を議論してください。
+プルリクエストやイシューの報告を歓迎します！
 
-## 📧 サポート
+## 🔄 更新履歴
 
-問題が発生した場合は、GitHubのissueセクションで報告してください。
+- **v0.7.0** - Responses API + Tools機能対応
+- **v0.6.1** - SQLite永続化実装
+- **v0.5.0** - セッション管理強化
+- **v0.4.0** - 基本的なチャット機能
+- **v0.3.0** - データベース基盤
+- **v0.2.0** - 設定管理機能
+- **v0.1.0** - 初期リリース

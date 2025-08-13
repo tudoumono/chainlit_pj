@@ -101,3 +101,24 @@
 | 応答 | `choices[0].message.content` | `output_text` |
 | 会話継続 | メッセージ履歴を管理 | `previous_response_id` |
 | ツール | `function`タイプ | `web_search_preview`等 |
+
+### アプリケーションの統合
+
+#### 目的
+2つのファイル（`app.py`と`app_responses_api.py`）が分かれていたので一本化
+
+#### 実施内容
+1. **古い`app.py`をバックアップ**
+   - `app.py` → `app_old.py.backup`にリネーム
+
+2. **`app_responses_api.py`をメインファイルに**
+   - `app_responses_api.py` → `app.py`にリネーム
+   - Version 0.7.0 (Responses API + Tools)を採用
+
+3. **起動スクリプトの更新**
+   - `run.py`をPhase 5完了版対応に更新
+
+### 統合後の状態
+- メインファイル: `app.py` (v0.7.0)
+- バックアップ: `app_old.py.backup` (v0.6.1)
+- 起動方法: `python run.py` または `chainlit run app.py`

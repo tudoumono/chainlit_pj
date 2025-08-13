@@ -10,7 +10,7 @@ from pathlib import Path
 def main():
     """メイン実行関数"""
     print("=" * 60)
-    print("🚀 AI Workspace - Chainlit公式機能版")
+    print("🚀 AI Workspace - Phase 5完了版")
     print("=" * 60)
     
     # .envファイルの存在確認
@@ -32,6 +32,13 @@ def main():
     else:
         print("🔓 認証: 無効")
     
+    print("-" * 60)
+    print("📌 実装状況:")
+    print("   ✅ Phase 1: 基本環境構築")
+    print("   ✅ Phase 2: 設定管理機能")
+    print("   ✅ Phase 3: データベース基盤")
+    print("   ✅ Phase 4: 基本的なチャット機能")
+    print("   ✅ Phase 5: セッション永続化の強化")
     print("-" * 60)
     
     # Chainlitの起動
