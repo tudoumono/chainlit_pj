@@ -7,12 +7,25 @@ from typing import Optional, Dict, List, Any
 from datetime import datetime
 import chainlit as cl
 from chainlit.data import BaseDataLayer
-from chainlit.types import ThreadDict, Pagination, ThreadFilter
+from chainlit.types import ThreadDict, Pagination, ThreadFilter, PaginatedResponse
 from chainlit.element import ElementDict
 from chainlit.step import StepDict
 from chainlit.user import User
 import json
 import uuid
+
+
+class SimplePaginatedResponse:
+    """Paginationレスポンスラッパー"""
+    def __init__(self, data: List, page_info: Dict):
+        self.data = data
+        self.pageInfo = page_info
+    
+    def to_dict(self):
+        return {
+            "data": self.data,
+            "pageInfo": self.pageInfo
+        }
 
 
 class SimpleDataLayer(BaseDataLayer):
@@ -30,10 +43,17 @@ class SimpleDataLayer(BaseDataLayer):
     
     async def get_user(self, identifier: str) -> Optional[User]:
         """ユーザー情報を取得"""
-        return self.users.get(identifier, User(identifier=identifier))
+        if identifier not in self.users:
+            user = User(identifier=identifier)
+            # idプロパティを追加
+            user.id = identifier
+            self.users[identifier] = user
+        return self.users[identifier]
     
     async def create_user(self, user: User) -> Optional[User]:
         """ユーザーを作成"""
+        # idプロパティを追加
+        user.id = user.identifier
         self.users[user.identifier] = user
         return user
     
@@ -43,6 +63,11 @@ class SimpleDataLayer(BaseDataLayer):
     ) -> Optional[ThreadDict]:
         """新しいスレッドを作成"""
         thread_id = thread.get("id")
+        # userIdとuser_idの両方を保存
+        if "userId" in thread and "user_id" not in thread:
+            thread["user_id"] = thread["userId"]
+        elif "user_id" in thread and "userId" not in thread:
+            thread["userId"] = thread["user_id"]
         self.threads[thread_id] = thread
         return thread
     
@@ -70,6 +95,11 @@ class SimpleDataLayer(BaseDataLayer):
         """スレッドを取得"""
         thread = self.threads.get(thread_id)
         if thread:
+            # userIdとuser_idの両方を確保
+            if "userId" not in thread and "user_id" in thread:
+                thread["userId"] = thread["user_id"]
+            elif "user_id" not in thread and "userId" in thread:
+                thread["user_id"] = thread["userId"]
             # stepsを追加（ChainlitのUIが期待する形式）
             thread_steps = []
             for step_id, step in self.steps.items():
@@ -93,10 +123,10 @@ class SimpleDataLayer(BaseDataLayer):
         # フィルタリング
         filtered_threads = []
         for thread in self.threads.values():
-            if filters.user_id and thread.get("user_id") != filters.user_id:
-                continue
-            if filters.userId and thread.get("userId") != filters.userId:
-                continue
+            # userId属性を優先的にチェック
+            if hasattr(filters, 'userId') and filters.userId:
+                if thread.get("user_id") != filters.userId and thread.get("userId") != filters.userId:
+                    continue
             filtered_threads.append(thread)
         
         # ソート（作成日時の降順）
@@ -111,14 +141,14 @@ class SimpleDataLayer(BaseDataLayer):
         
         paginated_threads = filtered_threads[cursor:cursor + limit]
         
-        return {
-            "data": paginated_threads,
-            "pageInfo": {
+        return SimplePaginatedResponse(
+            data=paginated_threads,
+            page_info={
                 "hasNextPage": cursor + limit < len(filtered_threads),
                 "startCursor": cursor,
                 "endCursor": cursor + len(paginated_threads)
             }
-        }
+        )
     
     async def get_thread_author(self, thread_id: str) -> Optional[str]:
         """スレッドの作成者を取得"""
@@ -197,14 +227,14 @@ class SimpleDataLayer(BaseDataLayer):
         
         paginated_feedbacks = feedbacks_list[cursor:cursor + limit]
         
-        return {
-            "data": paginated_feedbacks,
-            "pageInfo": {
+        return SimplePaginatedResponse(
+            data=paginated_feedbacks,
+            page_info={
                 "hasNextPage": cursor + limit < len(feedbacks_list),
                 "startCursor": cursor,
                 "endCursor": cursor + len(paginated_feedbacks)
             }
-        }
+        )
     
     async def get_feedback(self, feedback_id: str) -> Optional[Dict]:
         """フィードバックを取得"""

@@ -1,8 +1,9 @@
 """
-Phase 5 (インメモリ優先版): Chainlitの履歴管理
-- SQLiteエラーを回避してインメモリデータレイヤーを優先使用
+Phase 5 (SQLite永続化版): Chainlitの履歴管理
+- SQLiteデータレイヤーを使用して履歴を永続化
 - 認証機能による保護
-- 自動的な履歴管理（セッション中のみ）
+- 自動的な履歴管理（永続的に保存）
+- 詳細なデバッグログシステム
 """
 
 import chainlit as cl
@@ -13,40 +14,59 @@ import auth  # 認証設定をインポート
 from typing import Optional, Dict, List
 from datetime import datetime
 import json
+import uuid  # スレッドID生成用
+import chainlit.data as cl_data  # データレイヤーアクセス用
 
 # .envファイルの読み込み
 load_dotenv()
 
-# データレイヤーをインポート（インメモリを優先）
+# ログシステムをインポート
+from utils.logger import app_logger
+
+# データレイヤーをインポート（SQLiteを優先して永続化）
 data_layer_type = None
 
-# SQLiteでエラーが出るため、インメモリ版を優先的に使用
+# SQLiteデータレイヤーを優先的に使用（永続化のため）
 try:
-    # インメモリデータレイヤーを使用（優先）
-    import simple_data_layer
-    data_layer_type = "Simple In-Memory"
-    print("✅ シンプルなインメモリデータレイヤーを使用")
-    print("📝 注意: 履歴はアプリケーション再起動で消失します")
-except ImportError:
+    # SQLiteデータレイヤーを使用（優先）
+    import data_layer
+    data_layer_type = "SQLite (Persistent)"
+    app_logger.info("✅ SQLiteデータレイヤーを使用")
+    app_logger.info("📝 履歴は.chainlit/chainlit.dbに永続化されます")
+    print("✅ SQLiteデータレイヤーを使用")
+    print("📝 履歴は.chainlit/chainlit.dbに永続化されます")
+except Exception as e:
+    app_logger.error(f"⚠️ SQLiteデータレイヤーのエラー: {e}")
+    print(f"⚠️ SQLiteデータレイヤーのエラー: {e}")
     try:
-        # SQLAlchemyDataLayerを試す（SQLiteは不完全）
-        import chainlit.data as cl_data
-        from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
-        
-        # PostgreSQL接続文字列（環境変数から読み込む）
-        pg_conninfo = os.getenv("POSTGRES_CONNECTION_STRING")
-        if pg_conninfo:
-            cl_data._data_layer = SQLAlchemyDataLayer(conninfo=pg_conninfo)
-            data_layer_type = "SQLAlchemy (PostgreSQL)"
-            print("✅ SQLAlchemyデータレイヤー（PostgreSQL）を使用")
-        else:
-            # SQLiteは避ける（テーブル作成の問題があるため）
-            print("⚠️ PostgreSQL接続文字列が設定されていません")
-            print("📝 履歴機能を使用するには、simple_data_layer.pyを確認するか")
-            print("   PostgreSQLをセットアップしてください")
-    except Exception as e:
-        print(f"⚠️ SQLAlchemyDataLayerのエラー: {e}")
-        print("📝 simple_data_layer.pyを使用してください")
+        # インメモリデータレイヤーをフォールバックとして使用
+        import simple_data_layer
+        data_layer_type = "Simple In-Memory"
+        app_logger.info("✅ シンプルなインメモリデータレイヤーを使用")
+        print("✅ シンプルなインメモリデータレイヤーを使用")
+        print("📝 注意: 履歴はアプリケーション再起動で消失します")
+    except ImportError:
+        try:
+            # SQLAlchemyDataLayerを試す（PostgreSQL）
+            import chainlit.data as cl_data
+            from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
+            
+            # PostgreSQL接続文字列（環境変数から読み込む）
+            pg_conninfo = os.getenv("POSTGRES_CONNECTION_STRING")
+            if pg_conninfo:
+                cl_data._data_layer = SQLAlchemyDataLayer(conninfo=pg_conninfo)
+                data_layer_type = "SQLAlchemy (PostgreSQL)"
+                app_logger.info("✅ SQLAlchemyDataLayer（PostgreSQL）を使用")
+                print("✅ SQLAlchemyDataLayer（PostgreSQL）を使用")
+            else:
+                app_logger.warning("⚠️ PostgreSQL接続文字列が設定されていません")
+                print("⚠️ PostgreSQL接続文字列が設定されていません")
+                print("📝 履歴機能を使用するには、data_layerまたは")
+                print("   simple_data_layer.pyを確認してください")
+        except Exception as e:
+            app_logger.error(f"⚠️ SQLAlchemyDataLayerのエラー: {e}")
+            print(f"⚠️ SQLAlchemyDataLayerのエラー: {e}")
+            print("📝 data_layer.pyまたはsimple_data_layer.pyを使用してください")
 
 # utils モジュールをインポート（設定管理とAPI呼び出しのみ使用）
 from utils.config import config_manager
@@ -54,7 +74,164 @@ from utils.response_handler import response_handler
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
-VERSION = "0.5.5 (In-Memory Priority)"
+VERSION = "0.6.1 (SQLite Persistent + Logging)"
+
+
+@cl.on_chat_resume
+async def on_chat_resume(thread: ThreadDict):
+    """
+    履歴からチャットを復元する際の処理
+    過去のメッセージを画面に再表示する
+    """
+    app_logger.info(f"📂 on_chat_resumeが呼ばれました", 
+                   thread_id=thread.get('id', 'None')[:8],
+                   thread_name=thread.get('name', 'None'),
+                   steps_count=len(thread.get('steps', [])))
+    
+    print(f"📂 on_chat_resumeが呼ばれました")
+    print(f"   Thread ID: {thread.get('id', 'None')}")
+    print(f"   Thread Name: {thread.get('name', 'None')}")
+    print(f"   Steps count: {len(thread.get('steps', []))}")
+    
+    # 設定を読み込み
+    settings = config_manager.get_all_settings()
+    cl.user_session.set("settings", settings)
+    cl.user_session.set("system_prompt", "")
+    cl.user_session.set("message_count", 0)
+    cl.user_session.set("total_tokens", 0)
+    cl.user_session.set("thread_id", thread.get("id"))
+    
+    # 復元通知メッセージ
+    await cl.Message(
+        content=f"📂 過去の会話を復元中: {thread.get('name', 'Untitled')}...",
+        author="System"
+    ).send()
+    
+    # ステップから過去のメッセージを再構築して表示
+    steps = thread.get('steps', [])
+    app_logger.debug(f"復元するステップ数: {len(steps)}")
+    print(f"   復元するステップ数: {len(steps)}")
+    
+    # メッセージを順番に復元
+    message_count = 0
+    messages_to_display = []  # 表示するメッセージを一時保存
+    
+    # ステップを処理してメッセージを抽出
+    for step in steps:
+        step_type = step.get('type')
+        step_id = step.get('id')
+        created_at = step.get('createdAt')
+        
+        app_logger.debug(f"ステップ処理", 
+                        step_id=step_id[:8] if step_id else 'None',
+                        type=step_type,
+                        has_input=bool(step.get('input')),
+                        has_output=bool(step.get('output')))
+        
+        # ユーザーメッセージの場合
+        if step_type == 'user_message':
+            user_input = step.get('input', '')
+            if user_input:
+                messages_to_display.append({
+                    'type': 'user',
+                    'content': user_input,
+                    'id': step_id,
+                    'created_at': created_at
+                })
+                app_logger.debug(f"📥 ユーザーメッセージを準備", preview=user_input[:50])
+                print(f"   📥 ユーザーメッセージを準備: {user_input[:50]}...")
+        
+        # アシスタントメッセージの場合
+        elif step_type == 'assistant_message':
+            assistant_output = step.get('output', '')
+            if assistant_output:
+                messages_to_display.append({
+                    'type': 'assistant',
+                    'content': assistant_output,
+                    'id': step_id,
+                    'created_at': created_at
+                })
+                app_logger.debug(f"🤖 アシスタントメッセージを準備", preview=assistant_output[:50])
+                print(f"   🤖 アシスタントメッセージを準備: {assistant_output[:50]}...")
+            else:
+                app_logger.warning(f"⚠️ アシスタントメッセージの出力が空です", step_id=step_id[:8])
+                print(f"   ⚠️ アシスタントメッセージの出力が空です: {step_id[:8]}...")
+        
+        # runタイプはシステム的なものなのでスキップ
+        elif step_type == 'run':
+            # runステップにもoutputがある場合がある
+            run_output = step.get('output', '')
+            if run_output and not run_output.startswith('{'):  # JSONでない場合
+                # システムメッセージとして表示
+                messages_to_display.append({
+                    'type': 'system',
+                    'content': run_output,
+                    'id': step_id,
+                    'created_at': created_at
+                })
+                app_logger.debug(f"💻 runステップの出力を準備", preview=run_output[:50])
+                print(f"   💻 runステップの出力を準備: {run_output[:50]}...")
+            else:
+                app_logger.debug(f"ℹ️ runステップをスキップ", name=step.get('name', 'N/A'))
+                print(f"   ℹ️ runステップをスキップ: {step.get('name', 'N/A')}")
+        
+        # その他のタイプ
+        else:
+            # 必要に応じて他のステップタイプも処理
+            app_logger.warning(f"⚠️ 未処理のステップタイプ: {step_type}")
+            print(f"   ⚠️ 未処理のステップタイプ: {step_type}")
+            # outputがあれば表示
+            other_output = step.get('output', '')
+            if other_output:
+                messages_to_display.append({
+                    'type': 'system',
+                    'content': other_output,
+                    'id': step_id,
+                    'created_at': created_at
+                })
+    
+    # メッセージを順番に表示
+    for msg in messages_to_display:
+        if msg['type'] == 'user':
+            # ユーザーメッセージを表示
+            user_msg = cl.Message(
+                content=msg['content'],
+                author="User",
+                type="user_message"
+            )
+            user_msg.id = msg['id']  # 元のIDを保持
+            await user_msg.send()
+            message_count += 1
+        elif msg['type'] == 'assistant':
+            # アシスタントメッセージを表示
+            assistant_msg = cl.Message(
+                content=msg['content'],
+                author="Assistant"
+            )
+            assistant_msg.id = msg['id']  # 元のIDを保持
+            await assistant_msg.send()
+            message_count += 1
+        elif msg['type'] == 'system':
+            # システムメッセージを表示
+            system_msg = cl.Message(
+                content=msg['content'],
+                author="System"
+            )
+            system_msg.id = msg['id']  # 元のIDを保持
+            await system_msg.send()
+            message_count += 1
+    
+    # 復元完了メッセージ
+    await cl.Message(
+        content=f"✅ 復元完了: {message_count}件のメッセージを表示しました",
+        author="System"
+    ).send()
+    
+    # セッション変数を更新
+    cl.user_session.set("message_count", message_count)
+    
+    app_logger.history_restored(thread.get('id', 'unknown'), message_count)
+    print(f"   ✅ 復元完了: {message_count}件のメッセージ")
 
 
 @cl.on_chat_start
@@ -68,6 +245,15 @@ async def on_chat_start():
     cl.user_session.set("system_prompt", "")
     cl.user_session.set("message_count", 0)
     cl.user_session.set("total_tokens", 0)
+    
+    # 現在のユーザー情報を取得
+    current_user = cl.user_session.get("user")
+    app_logger.info(f"👤 新しいセッション開始", user=current_user.identifier if current_user else "anonymous")
+    print(f"👤 現在のユーザー: {current_user}")
+    
+    # Chainlitが生成するスレッドIDを使用
+    # メッセージが送信される際にChainlitがスレッドIDを自動生成するため、
+    # ここではスレッド作成を遅延させる
     
     # APIキーの確認
     api_status = "✅ 設定済み" if settings.get("OPENAI_API_KEY") and settings["OPENAI_API_KEY"] != "your_api_key_here" else "⚠️ 未設定"
@@ -91,13 +277,13 @@ async def on_chat_start():
 - `/setkey [APIキー]` - OpenAI APIキーを設定
 
 💡 **ヒント**: 
-- 会話はセッション中のみ保存されます（インメモリ）
+- 会話は永続的に保存されます
 - 左上の履歴ボタンから過去の会話にアクセスできます
-- アプリ再起動で履歴は消失します
+- アプリを再起動しても履歴は保持されます
 
 ## 📝 データレイヤーの状態
 - **タイプ**: {data_layer_type or '❌ 未設定'}
-- **永続化**: {"⚠️ インメモリ（再起動で消失）" if data_layer_type == "Simple In-Memory" else "✅ 永続化あり" if data_layer_type else "❌ なし"}
+- **永続化**: {"✅ SQLiteに永続化" if data_layer_type == "SQLite (Persistent)" else "✅ PostgreSQLに永続化" if data_layer_type == "SQLAlchemy (PostgreSQL)" else "⚠️ インメモリ（再起動で消失）" if data_layer_type == "Simple In-Memory" else "❌ なし"}
 - **認証**: {"✅ 有効" if os.getenv("CHAINLIT_AUTH_TYPE") == "credentials" else "❌ 無効"}
 
 ---
@@ -109,173 +295,123 @@ async def on_chat_start():
     # APIキーが未設定の場合は警告
     if not settings.get("OPENAI_API_KEY") or settings["OPENAI_API_KEY"] == "your_api_key_here":
         await cl.Message(
-            content="⚠️ **APIキーが未設定です**\n`/setkey sk-xxxxx` コマンドで設定してください。",
+            content="⚠️ **APIキーが設定されていません**\n\n`/setkey [あなたのAPIキー]` コマンドで設定してください。",
             author="System"
         ).send()
-
-
-@cl.on_chat_resume
-async def on_chat_resume(thread: ThreadDict):
-    """
-    ユーザーが履歴からチャットを再開した際に呼び出される
-    """
-    print(f"チャット再開: Thread ID = {thread['id']}")
-    
-    # 設定を復元
-    settings = config_manager.get_all_settings()
-    cl.user_session.set("settings", settings)
-    cl.user_session.set("system_prompt", "")
-    cl.user_session.set("message_count", 0)
-    cl.user_session.set("total_tokens", 0)
-    
-    # スレッドの情報を取得
-    thread_id = thread.get('id', 'Unknown')
-    created_at = thread.get('createdAt', '')
-    
-    # 再開メッセージ
-    await cl.Message(
-        content=f"""
-✅ 以前の会話を再開しました
-
-**Thread ID**: `{thread_id[:8]}...`
-**作成日時**: {created_at}
-
-会話を続けてください。
-        """,
-        author="System"
-    ).send()
 
 
 @cl.on_message
 async def on_message(message: cl.Message):
     """
-    ユーザーメッセージ受信時の処理
+    ユーザーメッセージの処理
+    コマンドの処理とAI応答の生成・保存
     """
-    content = message.content.strip()
-    settings = cl.user_session.get("settings", {})
+    # メッセージを受信
+    user_input = message.content
+    current_user = cl.user_session.get("user")
+    user_id = current_user.identifier if current_user else "anonymous"
+    
+    app_logger.message_received(user_input, user_id)
+    app_logger.debug(f"📥 メッセージ受信", 
+                     user=user_id,
+                     length=len(user_input),
+                     thread_id=cl.context.session.thread_id[:8] if hasattr(cl.context.session, 'thread_id') else 'None')
+    
+    # メッセージカウントを増加
+    message_count = cl.user_session.get("message_count", 0) + 1
+    cl.user_session.set("message_count", message_count)
     
     # コマンド処理
-    if content.startswith("/"):
-        await handle_command(content)
+    if user_input.startswith("/"):
+        await handle_command(user_input)
         return
     
-    # APIキーの確認
-    if not settings.get("OPENAI_API_KEY") or settings["OPENAI_API_KEY"] == "your_api_key_here":
+    # AI応答の生成
+    settings = cl.user_session.get("settings", {})
+    api_key = settings.get("OPENAI_API_KEY")
+    
+    if not api_key or api_key == "your_api_key_here":
         await cl.Message(
-            content="❌ APIキーが設定されていません。`/setkey sk-xxxxx` で設定してください。",
+            content="⚠️ APIキーが設定されていません。\n`/setkey [APIキー]` でAPIキーを設定してください。",
             author="System"
         ).send()
         return
     
-    # メッセージカウントを更新
-    count = cl.user_session.get("message_count", 0) + 1
-    cl.user_session.set("message_count", count)
-    
-    # メッセージ履歴を構築（Chainlitが自動で管理）
-    messages = []
-    
-    # システムプロンプトがあれば追加
+    # システムプロンプト
     system_prompt = cl.user_session.get("system_prompt", "")
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
+    model = settings.get("DEFAULT_MODEL", "gpt-4o-mini")
     
-    # 現在のメッセージを追加
-    messages.append({"role": "user", "content": content})
+    app_logger.debug(f"🤖 AI応答生成開始", model=model, has_system_prompt=bool(system_prompt))
     
-    # AIレスポンスメッセージを作成
-    ai_message = cl.Message(content="")
-    await ai_message.send()
+    # レスポンスハンドラーを使用してAI応答を生成
+    response_text = await response_handler.get_response(
+        user_input,
+        system_prompt=system_prompt,
+        model=model
+    )
     
-    # ストリーミング応答を処理
-    full_response = ""
-    token_usage = {}
-    
-    try:
-        # OpenAI APIを呼び出し
-        async for chunk in response_handler.create_chat_completion(
-            messages=messages,
-            model=settings.get('DEFAULT_MODEL', 'gpt-4o-mini'),
-            temperature=0.7,
-            stream=True
-        ):
-            # エラーチェック
-            if "error" in chunk:
-                error_msg = f"❌ エラー: {chunk['error']}"
-                ai_message = cl.Message(content=error_msg)
-                await ai_message.send()
-                return
-            
-            # ストリーミングコンテンツを処理
-            if chunk.get("choices"):
-                for choice in chunk["choices"]:
-                    if "delta" in choice:
-                        delta = choice["delta"]
-                        if "content" in delta:
-                            full_response += delta["content"]
-                            await ai_message.stream_token(delta["content"])
-            
-            # トークン使用量を更新
-            if "usage" in chunk:
-                token_usage = chunk["usage"]
+    if response_text:
+        # AI応答を送信
+        ai_message = cl.Message(content=response_text, author="Assistant")
+        await ai_message.send()
         
-        # ストリーミング完了
-        await ai_message.update()
+        # AI応答をログに記録
+        app_logger.ai_response(response_text, model)
+        app_logger.debug(f"🤖 AI応答送信完了", 
+                        length=len(response_text),
+                        message_id=ai_message.id[:8] if ai_message.id else 'None')
         
-        # トークン使用量を更新
-        if token_usage:
-            total_tokens = cl.user_session.get("total_tokens", 0) + token_usage.get("total_tokens", 0)
-            cl.user_session.set("total_tokens", total_tokens)
-    
-    except Exception as e:
-        error_msg = f"❌ エラーが発生しました: {str(e)}"
+        # トークン使用量を更新（簡易計算）
+        total_tokens = cl.user_session.get("total_tokens", 0)
+        estimated_tokens = len(user_input.split()) + len(response_text.split())
+        total_tokens += estimated_tokens * 2  # 概算
+        cl.user_session.set("total_tokens", total_tokens)
+        
+        app_logger.debug(f"📊 トークン使用量更新", 
+                        estimated_tokens=estimated_tokens,
+                        total_tokens=total_tokens)
+    else:
+        error_msg = "❌ AI応答の生成に失敗しました。"
         await cl.Message(content=error_msg, author="System").send()
-        print(f"Error in on_message: {e}")
+        app_logger.error(f"AI応答生成失敗", user_input=user_input[:100])
 
 
-async def handle_command(command: str):
-    """
-    コマンドを処理
-    """
-    parts = command.split(maxsplit=1)
+async def handle_command(user_input: str):
+    """コマンドを処理"""
+    parts = user_input.split(maxsplit=1)
     cmd = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
     
+    app_logger.debug(f"🎮 コマンド処理", command=cmd, args=args[:50] if args else None)
+    
     if cmd == "/help":
         await show_help()
-    
     elif cmd == "/model":
-        if not args:
+        if args:
+            await change_model(args)
+        else:
             await cl.Message(
-                content="❌ 使用方法: `/model gpt-4o-mini`",
+                content="❌ モデル名を指定してください。\n例: `/model gpt-4o`",
                 author="System"
             ).send()
-            return
-        await change_model(args)
-    
     elif cmd == "/system":
         await set_system_prompt(args)
-    
     elif cmd == "/stats":
         await show_statistics()
-    
     elif cmd == "/clear":
         await start_new_chat()
-    
     elif cmd == "/setkey":
-        if not args:
+        if args:
+            await set_api_key(args)
+        else:
             await cl.Message(
-                content="❌ 使用方法: `/setkey sk-xxxxxxxxxxxxx`",
+                content="❌ APIキーを指定してください。\n例: `/setkey sk-...`",
                 author="System"
             ).send()
-            return
-        await set_api_key(args)
-    
     elif cmd == "/test":
         await test_connection()
-    
     elif cmd == "/status":
         await show_status()
-    
     else:
         await cl.Message(
             content=f"❓ 不明なコマンド: {cmd}\n\n`/help` で利用可能なコマンドを確認できます。",
@@ -285,8 +421,8 @@ async def handle_command(command: str):
 
 async def show_help():
     """コマンドヘルプを表示"""
-    help_message = """
-# 📚 コマンドヘルプ (インメモリ版)
+    help_message = f"""
+# 📚 コマンドヘルプ (永続化版)
 
 ## 🤖 AI設定コマンド
 
@@ -319,14 +455,13 @@ async def show_help():
 
 ## 💡 履歴管理について
 
-**現在インメモリデータレイヤーを使用中：**
-- ✅ 履歴UIは表示されます
-- ✅ セッション中は履歴が保持されます
-- ⚠️ アプリ再起動で履歴が消失します
+**現在{"SQLiteデータレイヤー" if data_layer_type == "SQLite (Persistent)" else "のデータレイヤー"}を使用中：**
+- ✅ 履歴UIが表示されます
+- {"✅ 履歴はSQLiteに永続的に保存されます" if data_layer_type == "SQLite (Persistent)" else "✅ セッション中は履歴が保持されます"}
+- {"✅ アプリ再起動後も履歴が保持されます" if data_layer_type == "SQLite (Persistent)" else "⚠️ アプリ再起動で履歴が消失します"}
 
-**永続的な履歴が必要な場合：**
-- PostgreSQLをセットアップ
-- 環境変数 `POSTGRES_CONNECTION_STRING` を設定
+**履歴の保存場所：**
+- {".chainlit/chainlit.db" if data_layer_type == "SQLite (Persistent)" else "メモリ内（一時的）"}
 """
     
     await cl.Message(content=help_message, author="System").send()
@@ -338,6 +473,8 @@ async def change_model(model: str):
     settings["DEFAULT_MODEL"] = model
     cl.user_session.set("settings", settings)
     
+    app_logger.info(f"モデル変更", model=model)
+    
     await cl.Message(
         content=f"✅ モデルを {model} に変更しました",
         author="System"
@@ -347,6 +484,8 @@ async def change_model(model: str):
 async def set_system_prompt(prompt: str):
     """システムプロンプトを設定"""
     cl.user_session.set("system_prompt", prompt)
+    
+    app_logger.info(f"システムプロンプト設定", length=len(prompt))
     
     if prompt:
         await cl.Message(
@@ -375,7 +514,7 @@ async def show_statistics():
 - **システムプロンプト**: {"設定済み" if cl.user_session.get("system_prompt") else "未設定"}
 - **データレイヤー**: {data_layer_type or '未設定'}
 
-💡 **ヒント**: インメモリデータレイヤーを使用中。履歴はアプリ再起動で消失します。
+💡 **ヒント**: {"SQLiteデータレイヤーを使用中。履歴は永続的に保存されます。" if data_layer_type == "SQLite (Persistent)" else "インメモリデータレイヤーを使用中。履歴はアプリ再起動で消失します。"}
 """
     
     await cl.Message(content=stats_message, author="System").send()
@@ -383,13 +522,17 @@ async def show_statistics():
 
 async def start_new_chat():
     """新しいチャットを開始"""
-    # Chainlitが自動で新しいスレッドを作成
+    # Chainlitが自動で新しいスレッドを作成するため、
+    # ここではセッション変数のリセットのみを行う
+    
+    app_logger.info("新しいチャット開始")
+    
     await cl.Message(
         content=f"""
 ✅ 新しい会話を開始しました
 
-{"前の会話はセッション中のみ保存されています。" if data_layer_type == "Simple In-Memory" else ""}
-{"左上の履歴ボタンから現在のセッションの会話にアクセスできます。" if data_layer_type else ""}
+{"前の会話はSQLiteに永続的に保存されています。" if data_layer_type == "SQLite (Persistent)" else "前の会話はセッション中のみ保存されています。"}
+左上の履歴ボタンから過去の会話にアクセスできます。
         """,
         author="System"
     ).send()
@@ -407,6 +550,8 @@ async def set_api_key(api_key: str):
         new_settings = config_manager.get_all_settings()
         cl.user_session.set("settings", new_settings)
         response_handler.update_api_key(api_key)
+        
+        app_logger.info("APIキー設定成功")
         
         await cl.Message(
             content="✅ APIキーを設定しました",
@@ -426,8 +571,10 @@ async def test_connection():
     if success:
         test_success, test_message = await config_manager.test_simple_completion()
         result = f"✅ 接続成功！\n{test_message if test_success else '応答テスト失敗'}"
+        app_logger.info("API接続テスト成功")
     else:
         result = f"❌ 接続失敗: {message}"
+        app_logger.error(f"API接続テスト失敗", error=message)
     
     await cl.Message(content=result, author="System").send()
 
@@ -451,12 +598,18 @@ async def show_status():
 
 
 if __name__ == "__main__":
+    app_logger.info(f"Starting {APP_NAME} {VERSION}")
+    app_logger.info(f"Working Directory: {os.getcwd()}")
+    
     print(f"Starting {APP_NAME} {VERSION}")
     print(f"Working Directory: {os.getcwd()}")
     print("=" * 50)
     print("📌 データレイヤーの状態:")
     print(f"   - タイプ: {data_layer_type or '未設定'}")
-    if data_layer_type == "Simple In-Memory":
+    if data_layer_type == "SQLite (Persistent)":
+        print("   ✅ SQLite: 履歴は永続的に保存されます")
+        print("   📂 保存場所: .chainlit/chainlit.db")
+    elif data_layer_type == "Simple In-Memory":
         print("   ⚠️ インメモリ: 履歴はアプリ再起動で消失します")
     elif not data_layer_type:
         print("   ❌ データレイヤーが設定されていません")
@@ -470,3 +623,5 @@ if __name__ == "__main__":
     current_settings = config_manager.get_all_settings()
     print(f"API Key: {current_settings.get('OPENAI_API_KEY_DISPLAY', 'Not set')}")
     print(f"Default Model: {current_settings.get('DEFAULT_MODEL', 'Not set')}")
+    
+    app_logger.info("アプリケーション起動完了")
