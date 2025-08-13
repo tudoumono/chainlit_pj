@@ -1,0 +1,37 @@
+{
+  "enabled": false,
+  "tools": {
+    "web_search": {
+      "enabled": true,
+      "name": "web_search",
+      "description": "Search the web for current information",
+      "auto_invoke": true
+    },
+    "file_search": {
+      "enabled": true,
+      "name": "file_search",
+      "description": "Search through uploaded files and documents",
+      "auto_invoke": true,
+      "file_ids": []
+    },
+    "code_interpreter": {
+      "enabled": false,
+      "name": "code_interpreter",
+      "description": "Execute Python code for calculations and data analysis",
+      "auto_invoke": false
+    },
+    "custom_functions": {
+      "enabled": false,
+      "functions": []
+    }
+  },
+  "settings": {
+    "tool_choice": "auto",
+    "parallel_tool_calls": true,
+    "max_tools_per_call": 5,
+    "web_search_max_results": 5,
+    "file_search_max_chunks": 20,
+    "show_tool_calls": true,
+    "show_tool_results": true
+  }
+}

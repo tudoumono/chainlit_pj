@@ -180,6 +180,7 @@ class ToolsConfig:
     def build_tools_parameter(self) -> Optional[List[Dict[str, Any]]]:
         """
         OpenAI APIのtoolsパラメータを構築
+        注: Responses APIではweb_search_previewタイプを使用
         
         Returns:
             有効なツールのリスト（API用フォーマット）
@@ -189,13 +190,14 @@ class ToolsConfig:
         
         tools = []
         
-        # Web検索ツール
+        # Web検索ツール (web_search_previewタイプとして定義)
         if self.is_tool_enabled("web_search"):
             tools.append({
-                "type": "web_search"
+                "type": "web_search_preview",
+                "search_context_size": "medium",  # low, medium, high
             })
         
-        # ファイル検索ツール  
+        # ファイル検索ツール (file_searchタイプとして定義)
         if self.is_tool_enabled("file_search"):
             file_search_config = {
                 "type": "file_search"
@@ -208,7 +210,7 @@ class ToolsConfig:
                 }
             tools.append(file_search_config)
         
-        # コードインタープリター
+        # コードインタープリター (code_interpreterタイプとして定義)
         if self.is_tool_enabled("code_interpreter"):
             tools.append({
                 "type": "code_interpreter"

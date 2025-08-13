@@ -83,6 +83,7 @@ class ResponsesAPIHandler:
         stream: bool = True,
         use_tools: bool = None,
         tool_choice: Union[str, Dict] = None,
+        previous_response_id: str = None,
         **kwargs
     ) -> AsyncGenerator[Dict, None]:
         """
@@ -96,6 +97,7 @@ class ResponsesAPIHandler:
             stream: ストリーミング有効/無効
             use_tools: Tools機能を使用するか（Noneの場合は設定に従う）
             tool_choice: ツール選択設定
+            previous_response_id: 前の応答ID（会話継続用）
             **kwargs: その他のパラメータ
         
         Yields:
@@ -110,14 +112,36 @@ class ResponsesAPIHandler:
         
         model = model or self.default_model
         
-        # API呼び出しのパラメータを構築
+        # メッセージ履歴から入力とシステムプロンプトを抽出
+        input_content = None
+        instructions = None
+        
+        # 最新のユーザーメッセージを取得
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                input_content = msg.get("content")
+                break
+        
+        # システムプロンプトを取得
+        for msg in messages:
+            if msg.get("role") == "system":
+                instructions = msg.get("content")
+                break
+        
+        # Responses APIのパラメータを構築
         api_params = {
             "model": model,
-            "messages": messages,
+            "input": input_content or "Hello",
             "temperature": temperature,
             "stream": stream,
             **kwargs
         }
+        
+        # オプションパラメータを追加
+        if instructions:
+            api_params["instructions"] = instructions
+        if previous_response_id:
+            api_params["previous_response_id"] = previous_response_id
         
         # オプションパラメータを追加
         if max_tokens:
@@ -141,16 +165,36 @@ class ResponsesAPIHandler:
                 api_params["parallel_tool_calls"] = self.tools_config.get_setting("parallel_tool_calls", True)
         
         try:
-            # APIを呼び出し
-            response = await self.async_client.chat.completions.create(**api_params)
+            # まずResponses APIを試す
+            try:
+                response = await self.async_client.responses.create(**api_params)
+                
+                # ストリーミングモード
+                if stream:
+                    async for chunk in response:
+                        yield self._process_response_stream_chunk(chunk)
+                # 非ストリーミングモード
+                else:
+                    yield self._process_response_output(response)
             
-            # ストリーミングモード
-            if stream:
-                async for chunk in response:
-                    yield self._process_stream_chunk(chunk)
-            # 非ストリーミングモード
-            else:
-                yield self._process_response(response)
+            except AttributeError:
+                # Responses APIが利用できない場合、Chat Completions APIにフォールバック
+                del api_params["input"]
+                if "instructions" in api_params:
+                    del api_params["instructions"]
+                if "previous_response_id" in api_params:
+                    del api_params["previous_response_id"]
+                api_params["messages"] = messages
+                
+                response = await self.async_client.chat.completions.create(**api_params)
+                
+                # ストリーミングモード
+                if stream:
+                    async for chunk in response:
+                        yield self._process_stream_chunk(chunk)
+                # 非ストリーミングモード
+                else:
+                    yield self._process_response(response)
         
         except Exception as e:
             yield {
@@ -237,6 +281,29 @@ class ResponsesAPIHandler:
             }
         
         return chunk_dict
+    
+    def _process_response_output(self, response) -> Dict[str, Any]:
+        """
+        Responses APIの応答を処理
+        """
+        return {
+            "id": response.id if hasattr(response, 'id') else None,
+            "object": "response",
+            "output_text": response.output_text if hasattr(response, 'output_text') else "",
+            "output": response.output if hasattr(response, 'output') else [],
+            "model": response.model if hasattr(response, 'model') else self.default_model,
+            "created_at": response.created_at if hasattr(response, 'created_at') else datetime.now().timestamp()
+        }
+    
+    def _process_response_stream_chunk(self, chunk) -> Dict[str, Any]:
+        """
+        Responses APIのストリーミングチャンクを処理
+        """
+        return {
+            "type": "stream_chunk",
+            "id": chunk.id if hasattr(chunk, 'id') else None,
+            "content": chunk.delta if hasattr(chunk, 'delta') else None
+        }
     
     def _process_response(self, response) -> Dict[str, Any]:
         """非ストリーミングレスポンスを処理"""

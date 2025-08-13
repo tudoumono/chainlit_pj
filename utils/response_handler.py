@@ -317,7 +317,7 @@ class ResponseHandler:
                     }
             
             # 最終的な応答を返す
-            return {
+            yield {
                 "id": "fallback_response",
                 "object": "response",
                 "output_text": full_content,
@@ -329,7 +329,7 @@ class ResponseHandler:
             content = response.choices[0].message.content if response.choices else ""
             tool_calls = response.choices[0].message.tool_calls if response.choices and hasattr(response.choices[0].message, 'tool_calls') else None
             
-            return {
+            yield {
                 "id": response.id,
                 "object": "response",
                 "output_text": content,
