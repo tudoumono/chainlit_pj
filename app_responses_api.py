@@ -1,6 +1,7 @@
 """
-Phase 5 (SQLite永続化版): Chainlitの履歴管理
+Phase 5 (SQLite永続化版 + Responses API): Chainlitの履歴管理
 - SQLiteデータレイヤーを使用して履歴を永続化
+- OpenAI Responses API with Tools機能（Web検索、ファイル検索）
 - 認証機能による保護
 - 自動的な履歴管理（永続的に保存）
 - 詳細なデバッグログシステム
@@ -75,7 +76,7 @@ from utils.tools_config import tools_config
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
-VERSION = "0.6.1 (SQLite Persistent + Logging)"
+VERSION = "0.7.0 (Responses API + Tools)"
 
 
 @cl.on_chat_resume
@@ -252,12 +253,12 @@ async def on_chat_start():
     app_logger.info(f"👤 新しいセッション開始", user=current_user.identifier if current_user else "anonymous")
     print(f"👤 現在のユーザー: {current_user}")
     
-    # Chainlitが生成するスレッドIDを使用
-    # メッセージが送信される際にChainlitがスレッドIDを自動生成するため、
-    # ここではスレッド作成を遅延させる
-    
     # APIキーの確認
     api_status = "✅ 設定済み" if settings.get("OPENAI_API_KEY") and settings["OPENAI_API_KEY"] != "your_api_key_here" else "⚠️ 未設定"
+    
+    # Tools機能の状態を取得
+    tools_status = "✅ 有効" if tools_config.is_enabled() else "❌ 無効"
+    enabled_tools = tools_config.get_enabled_tools() if tools_config.is_enabled() else []
     
     welcome_message = f"""
 # 🎯 {APP_NAME} へようこそ！
@@ -268,6 +269,8 @@ async def on_chat_start():
 - **APIキー**: {api_status}
 - **デフォルトモデル**: {settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}
 - **データレイヤー**: {data_layer_type or '未設定'}
+- **Tools機能**: {tools_status}
+  {f"- 有効なツール: {', '.join(enabled_tools)}" if enabled_tools else ""}
 
 ## 🔧 利用可能なコマンド
 - `/help` - コマンド一覧とヘルプを表示
@@ -276,11 +279,14 @@ async def on_chat_start():
 - `/stats` - 統計情報を表示
 - `/clear` - 新しい会話を開始
 - `/setkey [APIキー]` - OpenAI APIキーを設定
+- `/tools` - Tools機能の設定を表示
+- `/tools enable [ツール名]` - 特定のツールを有効化
+- `/tools disable [ツール名]` - 特定のツールを無効化
 
 💡 **ヒント**: 
 - 会話は永続的に保存されます
 - 左上の履歴ボタンから過去の会話にアクセスできます
-- アプリを再起動しても履歴は保持されます
+- Tools機能を有効にすると、Web検索やファイル検索が可能になります
 
 ## 📝 データレイヤーの状態
 - **タイプ**: {data_layer_type or '❌ 未設定'}
@@ -344,31 +350,88 @@ async def on_message(message: cl.Message):
     
     app_logger.debug(f"🤖 AI応答生成開始", model=model, has_system_prompt=bool(system_prompt))
     
-    # レスポンスハンドラーを使用してAI応答を生成（Responses API）
+    # Responses APIを使用してAI応答を生成
     messages = [
+        {"role": "system", "content": system_prompt} if system_prompt else {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": user_input}
     ]
     
-    response_text = ""
+    # Tools機能の状態をログに記録
+    tools_enabled = tools_config.is_enabled()
+    if tools_enabled:
+        enabled_tools = tools_config.get_enabled_tools()
+        app_logger.debug(f"🔧 Tools機能有効", tools=enabled_tools)
     
-    # Responses APIを使用
-    async for chunk in response_handler.create_response(
-        input=user_input,
-        instructions=system_prompt if system_prompt else "You are a helpful assistant.",
+    response_text = ""
+    tool_calls = None
+    
+    # Responses APIを呼び出し
+    async for chunk in responses_handler.create_response(
+        messages=messages,
         model=model,
-        stream=False
+        stream=False,
+        use_tools=tools_enabled
     ):
         if "error" in chunk:
             app_logger.error(f"API Error: {chunk['error']}")
             response_text = None
             break
-        elif "output_text" in chunk:
-            # Responses APIからの応答
-            response_text = chunk["output_text"]
-            break
         elif "choices" in chunk and chunk["choices"]:
-            # Chat Completions APIフォールバック
-            response_text = chunk["choices"][0]["message"]["content"]
+            choice = chunk["choices"][0]
+            message_data = choice.get("message", {})
+            
+            # 通常の応答
+            if message_data.get("content"):
+                response_text = message_data["content"]
+            
+            # ツール呼び出しがある場合
+            if message_data.get("tool_calls"):
+                tool_calls = message_data["tool_calls"]
+                app_logger.debug(f"🔧 ツール呼び出しを検出", count=len(tool_calls))
+                
+                # ツール呼び出しをUIに表示（設定による）
+                if tools_config.get_setting("show_tool_calls", True):
+                    for tc in tool_calls:
+                        tool_type = tc.get("type")
+                        if tool_type == "web_search":
+                            query = tc.get("web_search", {}).get("query", "")
+                            await cl.Message(
+                                content=f"🔍 **Web検索中**: `{query}`",
+                                author="System"
+                            ).send()
+                        elif tool_type == "file_search":
+                            await cl.Message(
+                                content=f"📁 **ファイル検索中**",
+                                author="System"
+                            ).send()
+                
+                # ツールを実行
+                tool_results = await responses_handler.handle_tool_calls(tool_calls, messages)
+                
+                # ツール結果を表示（設定による）
+                if tools_config.get_setting("show_tool_results", True):
+                    for result in tool_results:
+                        await cl.Message(
+                            content=f"📊 **ツール結果**:\n```\n{result['content'][:500]}...\n```",
+                            author="System"
+                        ).send()
+                
+                # ツール結果をメッセージに追加
+                messages.append(message_data)
+                messages.extend(tool_results)
+                
+                # ツール結果を踏まえて再度APIを呼び出し
+                async for final_chunk in responses_handler.create_response(
+                    messages=messages,
+                    model=model,
+                    stream=False,
+                    use_tools=False  # ツールは一度だけ使用
+                ):
+                    if "choices" in final_chunk and final_chunk["choices"]:
+                        final_message = final_chunk["choices"][0].get("message", {})
+                        if final_message.get("content"):
+                            response_text = final_message["content"]
+                        break
             break
     
     if response_text:
@@ -399,31 +462,31 @@ async def on_message(message: cl.Message):
 
 async def handle_command(user_input: str):
     """コマンドを処理"""
-    parts = user_input.split(maxsplit=1)
+    parts = user_input.split(maxsplit=2)
     cmd = parts[0].lower()
-    args = parts[1] if len(parts) > 1 else ""
     
-    app_logger.debug(f"🎮 コマンド処理", command=cmd, args=args[:50] if args else None)
+    app_logger.debug(f"🎮 コマンド処理", command=cmd)
     
     if cmd == "/help":
         await show_help()
     elif cmd == "/model":
-        if args:
-            await change_model(args)
+        if len(parts) > 1:
+            await change_model(parts[1])
         else:
             await cl.Message(
                 content="❌ モデル名を指定してください。\n例: `/model gpt-4o`",
                 author="System"
             ).send()
     elif cmd == "/system":
+        args = user_input[len("/system"):].strip() if len(user_input) > len("/system") else ""
         await set_system_prompt(args)
     elif cmd == "/stats":
         await show_statistics()
     elif cmd == "/clear":
         await start_new_chat()
     elif cmd == "/setkey":
-        if args:
-            await set_api_key(args)
+        if len(parts) > 1:
+            await set_api_key(parts[1])
         else:
             await cl.Message(
                 content="❌ APIキーを指定してください。\n例: `/setkey sk-...`",
@@ -434,75 +497,162 @@ async def handle_command(user_input: str):
     elif cmd == "/status":
         await show_status()
     elif cmd == "/tools":
-        await show_tools_status()
-    elif cmd == "/tools:web":
-        await toggle_web_search(args)
-    elif cmd == "/tools:file":
-        await toggle_file_search(args)
-    elif cmd == "/tools:function":
-        await toggle_function_calling(args)
-    elif cmd == "/upload":
-        await show_upload_help()
+        if len(parts) == 1:
+            await show_tools_status()
+        elif len(parts) >= 3:
+            await handle_tools_command(parts[1], parts[2])
+        else:
+            await cl.Message(
+                content="❌ コマンド形式が正しくありません。\n例: `/tools enable web_search`",
+                author="System"
+            ).send()
     else:
         await cl.Message(
-            content=f"❓ 不明なコマンド: {cmd}\n\n`/help` で利用可能なコマンドを確認できます。",
+            content=f"❌ 不明なコマンド: {cmd}\n`/help` でコマンド一覧を確認してください。",
             author="System"
         ).send()
 
 
 async def show_help():
-    """コマンドヘルプを表示"""
-    help_message = f"""
-# 📚 コマンドヘルプ (永続化版)
+    """ヘルプメッセージを表示"""
+    help_message = """
+# 📚 コマンド一覧
 
-## 🤖 AI設定コマンド
+## 基本コマンド
+- `/help` - このヘルプを表示
+- `/clear` - 新しい会話を開始
+- `/stats` - 現在のセッションの統計を表示
+- `/status` - 設定状態を表示
 
-### `/model [モデル名]`
-- **説明**: 使用するモデルを変更
-- **使用例**: `/model gpt-4o`
+## 設定コマンド
+- `/setkey [APIキー]` - OpenAI APIキーを設定
+- `/model [モデル名]` - 使用するモデルを変更
+  - 例: `/model gpt-4o-mini`
+  - 例: `/model gpt-4o`
+- `/system [プロンプト]` - システムプロンプトを設定
+  - 例: `/system あなたは親切なアシスタントです`
+- `/test` - API接続をテスト
 
-### `/system [プロンプト]`
-- **説明**: システムプロンプトを設定
-- **使用例**: `/system プログラミングの専門家として`
+## Tools機能コマンド
+- `/tools` - Tools機能の現在の設定を表示
+- `/tools enable web_search` - Web検索を有効化
+- `/tools disable web_search` - Web検索を無効化
+- `/tools enable file_search` - ファイル検索を有効化
+- `/tools disable file_search` - ファイル検索を無効化
+- `/tools enable all` - すべてのツールを有効化
+- `/tools disable all` - すべてのツールを無効化
 
-## 📊 情報表示
+## 💡 ヒント
+- 会話履歴は自動的に保存されます
+- 左上の履歴ボタンから過去の会話にアクセスできます
+- Tools機能を有効にすると、AIが必要に応じてWeb検索やファイル検索を実行します
+"""
+    await cl.Message(content=help_message, author="System").send()
 
-### `/stats`
-- **説明**: 現在のセッションの統計情報を表示
 
-### `/status`
-- **説明**: 現在の設定状態を表示
+async def show_tools_status():
+    """Tools機能の状態を表示"""
+    status = "✅ 有効" if tools_config.is_enabled() else "❌ 無効"
+    enabled_tools = tools_config.get_enabled_tools()
+    
+    tools_message = f"""
+# 🔧 Tools機能の設定
 
-## 🔧 システム設定
+## 全体の状態
+- **Tools機能**: {status}
 
-### `/setkey [APIキー]`
-- **説明**: OpenAI APIキーを設定
+## 個別ツールの状態
+- **Web検索**: {"✅ 有効" if tools_config.is_tool_enabled("web_search") else "❌ 無効"}
+- **ファイル検索**: {"✅ 有効" if tools_config.is_tool_enabled("file_search") else "❌ 無効"}
+- **コードインタープリター**: {"✅ 有効" if tools_config.is_tool_enabled("code_interpreter") else "❌ 無効"}
+- **カスタム関数**: {"✅ 有効" if tools_config.is_tool_enabled("custom_functions") else "❌ 無効"}
 
-### `/test`
-- **説明**: API接続をテスト
+## 設定
+- **ツール選択**: {tools_config.get_setting("tool_choice", "auto")}
+- **並列実行**: {"✅ 有効" if tools_config.get_setting("parallel_tool_calls", True) else "❌ 無効"}
+- **最大ツール数/呼び出し**: {tools_config.get_setting("max_tools_per_call", 5)}
+- **Web検索最大結果数**: {tools_config.get_setting("web_search_max_results", 5)}
+- **ファイル検索最大チャンク数**: {tools_config.get_setting("file_search_max_chunks", 20)}
+- **ツール呼び出し表示**: {"✅ 有効" if tools_config.get_setting("show_tool_calls", True) else "❌ 無効"}
+- **ツール結果表示**: {"✅ 有効" if tools_config.get_setting("show_tool_results", True) else "❌ 無効"}
 
-### `/clear`
-- **説明**: 新しい会話を開始
-
-## 💡 履歴管理について
-
-**現在{"SQLiteデータレイヤー" if data_layer_type == "SQLite (Persistent)" else "のデータレイヤー"}を使用中：**
-- ✅ 履歴UIが表示されます
-- {"✅ 履歴はSQLiteに永続的に保存されます" if data_layer_type == "SQLite (Persistent)" else "✅ セッション中は履歴が保持されます"}
-- {"✅ アプリ再起動後も履歴が保持されます" if data_layer_type == "SQLite (Persistent)" else "⚠️ アプリ再起動で履歴が消失します"}
-
-**履歴の保存場所：**
-- {".chainlit/chainlit.db" if data_layer_type == "SQLite (Persistent)" else "メモリ内（一時的）"}
+## 使用方法
+- `/tools enable [ツール名]` - ツールを有効化
+- `/tools disable [ツール名]` - ツールを無効化
+- `/tools enable all` - すべて有効化
+- `/tools disable all` - すべて無効化
 """
     
-    await cl.Message(content=help_message, author="System").send()
+    await cl.Message(content=tools_message, author="System").send()
+
+
+async def handle_tools_command(action: str, target: str):
+    """Tools機能のコマンドを処理"""
+    if action == "enable":
+        if target == "all":
+            tools_config.config["enabled"] = True
+            for tool_name in tools_config.config.get("tools", {}):
+                tools_config.update_tool_status(tool_name, True)
+            await cl.Message(
+                content="✅ すべてのツールを有効化しました",
+                author="System"
+            ).send()
+        elif target in tools_config.config.get("tools", {}):
+            tools_config.config["enabled"] = True
+            tools_config.update_tool_status(target, True)
+            await cl.Message(
+                content=f"✅ {target}を有効化しました",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content=f"❌ 不明なツール: {target}",
+                author="System"
+            ).send()
+    
+    elif action == "disable":
+        if target == "all":
+            tools_config.config["enabled"] = False
+            await cl.Message(
+                content="✅ すべてのツールを無効化しました",
+                author="System"
+            ).send()
+        elif target in tools_config.config.get("tools", {}):
+            tools_config.update_tool_status(target, False)
+            await cl.Message(
+                content=f"✅ {target}を無効化しました",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content=f"❌ 不明なツール: {target}",
+                author="System"
+            ).send()
+    
+    else:
+        await cl.Message(
+            content=f"❌ 不明なアクション: {action}",
+            author="System"
+            ).send()
 
 
 async def change_model(model: str):
     """モデルを変更"""
+    valid_models = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"]
+    
+    if model not in valid_models:
+        await cl.Message(
+            content=f"❌ 無効なモデル名です。\n利用可能: {', '.join(valid_models)}",
+            author="System"
+        ).send()
+        return
+    
     settings = cl.user_session.get("settings", {})
     settings["DEFAULT_MODEL"] = model
     cl.user_session.set("settings", settings)
+    
+    config_manager.update_setting("DEFAULT_MODEL", model)
+    responses_handler.update_model(model)
     
     app_logger.info(f"モデル変更", model=model)
     
@@ -544,6 +694,8 @@ async def show_statistics():
 - **使用モデル**: {model}
 - **システムプロンプト**: {"設定済み" if cl.user_session.get("system_prompt") else "未設定"}
 - **データレイヤー**: {data_layer_type or '未設定'}
+- **Tools機能**: {"有効" if tools_config.is_enabled() else "無効"}
+  - **有効なツール**: {', '.join(tools_config.get_enabled_tools()) if tools_config.get_enabled_tools() else "なし"}
 
 💡 **ヒント**: {"SQLiteデータレイヤーを使用中。履歴は永続的に保存されます。" if data_layer_type == "SQLite (Persistent)" else "インメモリデータレイヤーを使用中。履歴はアプリ再起動で消失します。"}
 """
@@ -580,7 +732,7 @@ async def set_api_key(api_key: str):
     if success:
         new_settings = config_manager.get_all_settings()
         cl.user_session.set("settings", new_settings)
-        response_handler.update_api_key(api_key)
+        responses_handler.update_api_key(api_key)
         
         app_logger.info("APIキー設定成功")
         
@@ -623,6 +775,7 @@ async def show_status():
 - **トークン使用量**: {cl.user_session.get("total_tokens", 0):,}
 - **システムプロンプト**: {"設定済み" if cl.user_session.get("system_prompt") else "未設定"}
 - **データレイヤー**: {data_layer_type or '未設定'}
+- **Tools機能**: {"有効" if tools_config.is_enabled() else "無効"}
 """
     
     await cl.Message(content=status_message, author="System").send()
@@ -645,6 +798,12 @@ if __name__ == "__main__":
     elif not data_layer_type:
         print("   ❌ データレイヤーが設定されていません")
         print("   📝 履歴機能が動作しません")
+    print("=" * 50)
+    print("📌 Tools機能の状態:")
+    print(f"   - 全体: {'有効' if tools_config.is_enabled() else '無効'}")
+    if tools_config.is_enabled():
+        enabled_tools = tools_config.get_enabled_tools()
+        print(f"   - 有効なツール: {', '.join(enabled_tools) if enabled_tools else 'なし'}")
     print("=" * 50)
     print("📌 ログイン情報:")
     print("   - ユーザー名: admin")

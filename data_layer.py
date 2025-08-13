@@ -415,24 +415,56 @@ class SQLiteDataLayer(BaseDataLayer):
         # ステップを保存
         async with aiosqlite.connect(self.db_path) as db:
             try:
-                await db.execute("""
-                    INSERT INTO steps 
-                    (id, thread_id, name, type, generation, input, output, metadata, 
-                     parent_id, start_time, end_time)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    step.get("id"),
-                    step.get("threadId"),
-                    step.get("name"),
-                    step.get("type"),
-                    step.get("generation"),
-                    step.get("input"),
-                    step.get("output"),
-                    json.dumps(step.get("metadata", {})),
-                    step.get("parentId"),
-                    step.get("startTime"),
-                    step.get("endTime")
-                ))
+                # まず既存のステップがあるか確認
+                cursor = await db.execute(
+                    "SELECT id FROM steps WHERE id = ?",
+                    (step.get("id"),)
+                )
+                existing_step = await cursor.fetchone()
+                
+                if existing_step:
+                    # 既存の場合は更新
+                    print(f"   ℹ️ ステップが既に存在します。更新します: {step.get('id')}")
+                    await db.execute("""
+                        UPDATE steps 
+                        SET thread_id = ?, name = ?, type = ?, generation = ?, 
+                            input = ?, output = ?, metadata = ?, parent_id = ?, 
+                            start_time = ?, end_time = ?
+                        WHERE id = ?
+                    """, (
+                        step.get("threadId"),
+                        step.get("name"),
+                        step.get("type"),
+                        step.get("generation"),
+                        step.get("input"),
+                        step.get("output"),
+                        json.dumps(step.get("metadata", {})),
+                        step.get("parentId"),
+                        step.get("startTime"),
+                        step.get("endTime"),
+                        step.get("id")
+                    ))
+                else:
+                    # 新規作成
+                    await db.execute("""
+                        INSERT INTO steps 
+                        (id, thread_id, name, type, generation, input, output, metadata, 
+                         parent_id, start_time, end_time)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        step.get("id"),
+                        step.get("threadId"),
+                        step.get("name"),
+                        step.get("type"),
+                        step.get("generation"),
+                        step.get("input"),
+                        step.get("output"),
+                        json.dumps(step.get("metadata", {})),
+                        step.get("parentId"),
+                        step.get("startTime"),
+                        step.get("endTime")
+                    ))
+                
                 await db.commit()
                 print(f"   ✅ ステップをSQLiteに保存しました")
             except Exception as e:
