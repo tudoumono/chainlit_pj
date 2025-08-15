@@ -214,9 +214,9 @@ class SQLiteDataLayer(BaseDataLayer):
             row = await cursor.fetchone()
             
             if row:
-                # ステップを取得
+                # ステップを取得（作成日時とIDで並び替え）
                 step_cursor = await db.execute(
-                    "SELECT * FROM steps WHERE thread_id = ? ORDER BY created_at ASC",
+                    "SELECT * FROM steps WHERE thread_id = ? ORDER BY created_at ASC, id ASC",
                     (thread_id,)
                 )
                 steps = []
@@ -351,7 +351,7 @@ class SQLiteDataLayer(BaseDataLayer):
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT * FROM steps WHERE thread_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM steps WHERE thread_id = ? ORDER BY created_at ASC, id ASC",
                 (thread_id,)
             )
             steps = []
@@ -379,6 +379,72 @@ class SQLiteDataLayer(BaseDataLayer):
     async def create_step(self, step: StepDict) -> None:
         """ステップを作成"""
         print(f"🔧 SQLite: create_stepが呼ばれました - ID: {step.get('id')}, ThreadID: {step.get('threadId')}, Type: {step.get('type')}")
+        
+        # システムメッセージの一時的なものを除外
+        # 復元通知・復元完了メッセージ・ウェルカムメッセージは保存しない
+        step_input = step.get("input", "")
+        step_output = step.get("output", "")
+        step_name = step.get("name", "")
+        
+        # 除外するメッセージのパターンを定義
+        exclude_patterns = [
+            # 復元関連
+            "📂 過去の会話を復元中",
+            "✅ 復元完了",
+            "Avatar for Assistant",
+            # ウェルカムメッセージ
+            "🎯 AI Workspace へようこそ",
+            "へようこそ！",
+            "利用可能なコマンド",
+            "APIキーが設定されていません",
+            "データレイヤーの状態",
+            "AIと会話を始めましょう！",
+            "Version:",
+            "現在の状態",
+            # コマンド応答
+            "📚 コマンド一覧",
+            "📊 現在のセッションの統計",
+            "📊 現在の設定",
+            "🔧 Tools機能の設定",
+            "✅ モデルを",
+            "✅ システムプロンプトを",
+            "✅ APIキーを設定しました",
+            "✅ 新しい会話を開始しました",
+            "✅ 接続成功",
+            "✅ すべてのツールを",
+            "❌ エラー:",
+            "❌ 接続失敗",
+            "❌ モデル名を",
+            "❌ APIキーを",
+            "❌ 不明な",
+            "⚠️ APIキーが",
+            "🔄 接続テスト中",
+            # ツール関連
+            "🔍 **Web検索中**",
+            "📁 **ファイル検索中**",
+            "📊 **ツール結果**"
+        ]
+        
+        # 出力をチェック
+        if isinstance(step_output, str):
+            for pattern in exclude_patterns:
+                if pattern in step_output:
+                    print(f"   ℹ️ システム/ウェルカムメッセージのため保存をスキップ: {step_output[:50]}")
+                    return
+        
+        # 入力をチェック
+        if isinstance(step_input, str):
+            for pattern in exclude_patterns:
+                if pattern in step_input:
+                    print(f"   ℹ️ システム/ウェルカムメッセージのため保存をスキップ: {step_input[:50]}")
+                    return
+        
+        # 名前をチェック
+        if isinstance(step_name, str):
+            for pattern in exclude_patterns:
+                if pattern in step_name:
+                    print(f"   ℹ️ システム/ウェルカムメッセージのため保存をスキップ: {step_name[:50]}")
+                    return
         
         # ユーザーメッセージの場合のみスレッドを自動作成
         thread_id = step.get("threadId")

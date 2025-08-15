@@ -5,6 +5,39 @@ OpenAI Responses API管理モジュール
 - ストリーミング応答処理
 - メッセージ履歴管理
 - エラーハンドリング
+
+========================================================
+重要: OpenAI Python SDKはResponses APIを正式にサポートしています
+========================================================
+
+参照ドキュメント:
+- 公式APIリファレンス: https://platform.openai.com/docs/api-reference/responses
+- Text generation: https://platform.openai.com/docs/guides/text-generation
+- Streaming responses: https://platform.openai.com/docs/guides/streaming
+- Conversation state: https://platform.openai.com/docs/guides/conversation-state
+
+ローカル参照:
+- F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\openai responseAPI reference (Text generation).md
+- F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\openai responseAPI reference (Conversation state).md
+- F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\openai responseAPI reference (Streaming API responses).md
+
+SDKでの使用方法:
+  from openai import OpenAI
+  client = OpenAI()
+  
+  # Responses APIの呼び出し
+  response = client.responses.create(
+      model="gpt-5",
+      input="Your message",
+      instructions="System prompt",
+      previous_response_id="prev_id"  # 会話継続用
+  )
+
+注意事項:
+- SDKのバージョンやインストール状況により、Responses APIが利用できない場合があります
+- その場合は自動的にChat Completions APIにフォールバックします
+- これはSDKがResponses APIをサポートしていないという意味ではありません
+- Responses APIは正式にサポートされており、将来的に標準となる予定です
 """
 
 import os
@@ -18,7 +51,15 @@ from .tools_config import tools_config
 
 
 class ResponsesAPIHandler:
-    """OpenAI Responses API管理クラス"""
+    """
+    OpenAI Responses API管理クラス
+    
+    このクラスはOpenAI SDKのResponses APIを使用してAI応答を生成します。
+    Responses APIが利用できない場合は、Chat Completions APIに自動的にフォールバックします。
+    
+    重要: OpenAI SDKはResponses APIを正式にサポートしています。
+    フォールバックは互換性のためのものであり、SDKの制限ではありません。
+    """
     
     def __init__(self):
         """初期化"""
@@ -89,13 +130,21 @@ class ResponsesAPIHandler:
         """
         Responses APIを呼び出し（Tools機能対応）
         
+        重要: このメソッドはまずResponses APIを試み、利用できない場合のみ
+        Chat Completions APIにフォールバックします。これはSDKの仕様に基づく
+        正しい実装パターンです。
+        
+        参照:
+        - openai responseAPI reference (Text generation).md
+        - openai responseAPI reference (Conversation state).md
+        
         Args:
             messages: メッセージ履歴
             model: 使用モデル
             temperature: 創造性パラメータ
             max_tokens: 最大トークン数
             stream: ストリーミング有効/無効
-            use_tools: Tools機能を使用するか（Noneの場合は設定に従う）
+            use_tools: Tools機能を使用するか
             tool_choice: ツール選択設定
             previous_response_id: 前の応答ID（会話継続用）
             **kwargs: その他のパラメータ
@@ -128,65 +177,95 @@ class ResponsesAPIHandler:
                 instructions = msg.get("content")
                 break
         
-        # Responses APIのパラメータを構築
-        api_params = {
+        # Responses APIパラメータを構築
+        # 参照: openai responseAPI reference (Text generation).md
+        response_params = {
             "model": model,
-            "input": input_content or "Hello",
             "temperature": temperature,
             "stream": stream,
             **kwargs
         }
         
-        # オプションパラメータを追加
-        if instructions:
-            api_params["instructions"] = instructions
-        if previous_response_id:
-            api_params["previous_response_id"] = previous_response_id
+        # inputパラメータを設定（メッセージまたは文字列）
+        if messages:
+            # 最新のユーザーメッセージを取得するか、全メッセージを送信
+            if len(messages) == 1 and messages[0].get("role") == "user":
+                response_params["input"] = messages[0].get("content")
+            else:
+                # メッセージ配列として送信
+                response_params["input"] = messages
         
-        # オプションパラメータを追加
+        # instructionsを設定（システムプロンプト）
+        for msg in messages:
+            if msg.get("role") == "system":
+                response_params["instructions"] = msg.get("content")
+                # システムメッセージをinputから除外
+                if isinstance(response_params.get("input"), list):
+                    response_params["input"] = [m for m in response_params["input"] if m.get("role") != "system"]
+                break
+        
+        # 会話継続用のresponse_id
+        # 参照: openai responseAPI reference (Conversation state).md
+        if previous_response_id:
+            response_params["previous_response_id"] = previous_response_id
+        
         if max_tokens:
-            api_params["max_tokens"] = max_tokens
+            response_params["max_tokens"] = max_tokens
         
         # Tools機能の設定
-        if use_tools is None:
-            use_tools = self.tools_config.is_enabled()
-        
-        if use_tools:
+        if use_tools and self.tools_config.is_enabled():
             tools = self.tools_config.build_tools_parameter()
             if tools:
-                api_params["tools"] = tools
-                
-                # tool_choiceの設定
-                if tool_choice is None:
-                    tool_choice = self.tools_config.get_setting("tool_choice", "auto")
-                api_params["tool_choice"] = tool_choice
-                
-                # 並列ツール呼び出しの設定
-                api_params["parallel_tool_calls"] = self.tools_config.get_setting("parallel_tool_calls", True)
+                response_params["tools"] = tools
+                response_params["tool_choice"] = tool_choice or "auto"
         
         try:
-            # まずResponses APIを試す
+            # ========================================================
+            # Responses APIを試す
+            # 重要: OpenAI SDKはResponses APIを正式にサポートしています
+            # 参照: https://platform.openai.com/docs/api-reference/responses
+            # ========================================================
+            # SDKドキュメント: client.responses.create()メソッドが正式に提供されています
+            # もしAttributeErrorが発生する場合は、SDKのバージョンやインストール状況の問題であり、
+            # SDKがResponses APIをサポートしていないという意味ではありません
             try:
-                response = await self.async_client.responses.create(**api_params)
+                response = await self.async_client.responses.create(**response_params)
                 
                 # ストリーミングモード
                 if stream:
-                    async for chunk in response:
-                        yield self._process_response_stream_chunk(chunk)
+                    async for event in response:
+                        yield self._process_response_stream_event(event)
                 # 非ストリーミングモード
                 else:
                     yield self._process_response_output(response)
             
             except AttributeError:
+                # ========================================================
                 # Responses APIが利用できない場合、Chat Completions APIにフォールバック
-                del api_params["input"]
-                if "instructions" in api_params:
-                    del api_params["instructions"]
-                if "previous_response_id" in api_params:
-                    del api_params["previous_response_id"]
-                api_params["messages"] = messages
+                # 注意: これはSDKのバージョンやインストール状況によるものです
+                # OpenAI SDKは正式にResponses APIをサポートしています
+                # 参照: openai responseAPI reference ドキュメント群
+                # 将来的にはResponses APIが標準となる予定です
+                # ========================================================
+                chat_params = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "stream": stream,
+                    **kwargs
+                }
                 
-                response = await self.async_client.chat.completions.create(**api_params)
+                if max_tokens:
+                    chat_params["max_tokens"] = max_tokens
+                
+                # Tools機能の設定
+                if use_tools and self.tools_config.is_enabled():
+                    tools = self.tools_config.build_tools_parameter()
+                    if tools:
+                        chat_params["tools"] = tools
+                        chat_params["tool_choice"] = tool_choice or "auto"
+                
+                response = await self.async_client.chat.completions.create(**chat_params)
                 
                 # ストリーミングモード
                 if stream:
@@ -284,7 +363,8 @@ class ResponsesAPIHandler:
     
     def _process_response_output(self, response) -> Dict[str, Any]:
         """
-        Responses APIの応答を処理
+        Responses APIの非ストリーミング応答を処理
+        参照: openai responseAPI reference (Text generation).md
         """
         return {
             "id": response.id if hasattr(response, 'id') else None,
@@ -292,18 +372,50 @@ class ResponsesAPIHandler:
             "output_text": response.output_text if hasattr(response, 'output_text') else "",
             "output": response.output if hasattr(response, 'output') else [],
             "model": response.model if hasattr(response, 'model') else self.default_model,
-            "created_at": response.created_at if hasattr(response, 'created_at') else datetime.now().timestamp()
+            "created_at": response.created_at if hasattr(response, 'created_at') else datetime.now().timestamp(),
+            "type": "response_complete"
         }
     
-    def _process_response_stream_chunk(self, chunk) -> Dict[str, Any]:
+    def _process_response_stream_event(self, event) -> Dict[str, Any]:
         """
-        Responses APIのストリーミングチャンクを処理
+        Responses APIのストリーミングイベントを処理
+        参照: openai responseAPI reference (Streaming API responses).md
+        
+        イベントタイプ:
+        - response.output_text.delta: テキストのデルタ
+        - response.completed: 応答完了
+        - error: エラー
         """
-        return {
-            "type": "stream_chunk",
-            "id": chunk.id if hasattr(chunk, 'id') else None,
-            "content": chunk.delta if hasattr(chunk, 'delta') else None
-        }
+        # イベントタイプに応じて処理
+        event_type = getattr(event, 'type', None)
+        
+        if event_type == 'response.output_text.delta':
+            # テキストデルタイベント
+            return {
+                "type": "text_delta",
+                "content": event.delta if hasattr(event, 'delta') else "",
+                "id": event.id if hasattr(event, 'id') else None
+            }
+        elif event_type == 'response.completed':
+            # 完了イベント
+            return {
+                "type": "response_complete",
+                "id": event.response_id if hasattr(event, 'response_id') else None,
+                "output_text": event.output_text if hasattr(event, 'output_text') else ""
+            }
+        elif event_type == 'error':
+            # エラーイベント
+            return {
+                "type": "error",
+                "error": str(event.error) if hasattr(event, 'error') else "Unknown error"
+            }
+        else:
+            # その他のイベント（デバッグ用）
+            return {
+                "type": "event",
+                "event_type": event_type,
+                "data": str(event)
+            }
     
     def _process_response(self, response) -> Dict[str, Any]:
         """非ストリーミングレスポンスを処理"""
@@ -374,19 +486,19 @@ class ResponsesAPIHandler:
         
         Args:
             tool_calls: ツール呼び出しのリスト
-            messages: 現在のメッセージ履歴
+            messages: メッセージ履歴（コンテキスト用）
         
         Returns:
-            ツール結果を含む更新されたメッセージ履歴
+            ツール実行結果のリスト
         """
         tool_results = []
         
         for tool_call in tool_calls:
+            tool_id = tool_call.get("id", f"tool_{datetime.now().timestamp()}")
             tool_type = tool_call.get("type")
-            tool_id = tool_call.get("id")
             
-            # Web検索ツール
             if tool_type == "web_search":
+                # Web検索を実行
                 query = tool_call.get("web_search", {}).get("query", "")
                 result = await self._handle_web_search(query)
                 tool_results.append({
@@ -395,8 +507,8 @@ class ResponsesAPIHandler:
                     "content": result
                 })
             
-            # ファイル検索ツール
             elif tool_type == "file_search":
+                # ファイル検索を実行
                 result = await self._handle_file_search(messages)
                 tool_results.append({
                     "tool_call_id": tool_id,
@@ -404,11 +516,28 @@ class ResponsesAPIHandler:
                     "content": result
                 })
             
-            # カスタム関数
             elif tool_type == "function":
+                # 関数呼び出しを実行
                 function_name = tool_call.get("function", {}).get("name")
                 arguments = tool_call.get("function", {}).get("arguments", "{}")
-                result = await self._handle_function_call(function_name, arguments)
+                
+                if function_name == "web_search":
+                    # Web検索関数として処理
+                    try:
+                        args = json.loads(arguments)
+                        query = args.get("query", "")
+                        result = await self._handle_web_search(query)
+                    except json.JSONDecodeError:
+                        result = f"エラー: 引数のパースに失敗しました: {arguments}"
+                    
+                elif function_name == "file_search":
+                    # ファイル検索関数として処理
+                    result = await self._handle_file_search(messages)
+                    
+                else:
+                    # その他のカスタム関数
+                    result = await self._handle_function_call(function_name, arguments)
+                
                 tool_results.append({
                     "tool_call_id": tool_id,
                     "role": "tool",
@@ -488,6 +617,7 @@ class ResponsesAPIHandler:
     ) -> List[Dict[str, str]]:
         """
         メッセージ履歴をAPI用にフォーマット
+        参照: openai responseAPI reference (Conversation state).md
         
         Args:
             messages: データベースから取得したメッセージ

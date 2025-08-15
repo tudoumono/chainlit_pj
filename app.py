@@ -5,6 +5,22 @@ Phase 5 (SQLite永続化版 + Responses API): Chainlitの履歴管理
 - 認証機能による保護
 - 自動的な履歴管理（永続的に保存）
 - 詳細なデバッグログシステム
+
+============================================================
+重要: OpenAI SDKはResponses APIを正式にサポートしています
+============================================================
+
+参照ドキュメント:
+- OpenAI公式APIリファレンス: https://platform.openai.com/docs/api-reference/responses
+- ローカルドキュメント: F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\
+  - openai responseAPI reference (Text generation).md
+  - openai responseAPI reference (Conversation state).md
+  - openai responseAPI reference (Streaming API responses).md
+
+このアプリケーションはResponses APIの仕様に完全に準拠して実装されています。
+SDKのバージョンや環境によりResponses APIが利用できない場合は、
+Chat Completions APIに自動的にフォールバックしますが、
+これはSDKがResponses APIをサポートしていないという意味ではありません。
 """
 
 import chainlit as cl
@@ -101,7 +117,11 @@ async def on_chat_resume(thread: ThreadDict):
     cl.user_session.set("system_prompt", "")
     cl.user_session.set("message_count", 0)
     cl.user_session.set("total_tokens", 0)
+    cl.user_session.set("previous_response_id", None)
+    cl.user_session.set("message_history", [])
     cl.user_session.set("thread_id", thread.get("id"))
+    cl.user_session.set("previous_response_id", None)
+    cl.user_session.set("message_history", [])
     
     # 復元通知メッセージ
     await cl.Message(
@@ -119,14 +139,15 @@ async def on_chat_resume(thread: ThreadDict):
     messages_to_display = []  # 表示するメッセージを一時保存
     
     # ステップを処理してメッセージを抽出
-    for step in steps:
+    for i, step in enumerate(steps):
         step_type = step.get('type')
         step_id = step.get('id')
         created_at = step.get('createdAt')
         
-        app_logger.debug(f"ステップ処理", 
+        app_logger.debug(f"ステップ処理 [{i+1}/{len(steps)}]", 
                         step_id=step_id[:8] if step_id else 'None',
                         type=step_type,
+                        created_at=created_at,
                         has_input=bool(step.get('input')),
                         has_output=bool(step.get('output')))
         
@@ -138,10 +159,11 @@ async def on_chat_resume(thread: ThreadDict):
                     'type': 'user',
                     'content': user_input,
                     'id': step_id,
-                    'created_at': created_at
+                    'created_at': created_at,
+                    'order': i  # 順序を保持
                 })
-                app_logger.debug(f"📥 ユーザーメッセージを準備", preview=user_input[:50])
-                print(f"   📥 ユーザーメッセージを準備: {user_input[:50]}...")
+                app_logger.debug(f"📥 ユーザーメッセージを準備 [{i+1}]", preview=user_input[:50])
+                print(f"   📥 ユーザーメッセージを準備 [{i+1}]: {user_input[:50]}...")
         
         # アシスタントメッセージの場合
         elif step_type == 'assistant_message':
@@ -151,13 +173,14 @@ async def on_chat_resume(thread: ThreadDict):
                     'type': 'assistant',
                     'content': assistant_output,
                     'id': step_id,
-                    'created_at': created_at
+                    'created_at': created_at,
+                    'order': i  # 順序を保持
                 })
-                app_logger.debug(f"🤖 アシスタントメッセージを準備", preview=assistant_output[:50])
-                print(f"   🤖 アシスタントメッセージを準備: {assistant_output[:50]}...")
+                app_logger.debug(f"🤖 アシスタントメッセージを準備 [{i+1}]", preview=assistant_output[:50])
+                print(f"   🤖 アシスタントメッセージを準備 [{i+1}]: {assistant_output[:50]}...")
             else:
-                app_logger.warning(f"⚠️ アシスタントメッセージの出力が空です", step_id=step_id[:8])
-                print(f"   ⚠️ アシスタントメッセージの出力が空です: {step_id[:8]}...")
+                app_logger.warning(f"⚠️ アシスタントメッセージの出力が空です [{i+1}]", step_id=step_id[:8])
+                print(f"   ⚠️ アシスタントメッセージの出力が空です [{i+1}]: {step_id[:8]}...")
         
         # runタイプはシステム的なものなのでスキップ
         elif step_type == 'run':
@@ -169,19 +192,20 @@ async def on_chat_resume(thread: ThreadDict):
                     'type': 'system',
                     'content': run_output,
                     'id': step_id,
-                    'created_at': created_at
+                    'created_at': created_at,
+                    'order': i  # 順序を保持
                 })
-                app_logger.debug(f"💻 runステップの出力を準備", preview=run_output[:50])
-                print(f"   💻 runステップの出力を準備: {run_output[:50]}...")
+                app_logger.debug(f"💻 runステップの出力を準備 [{i+1}]", preview=run_output[:50])
+                print(f"   💻 runステップの出力を準備 [{i+1}]: {run_output[:50]}...")
             else:
-                app_logger.debug(f"ℹ️ runステップをスキップ", name=step.get('name', 'N/A'))
-                print(f"   ℹ️ runステップをスキップ: {step.get('name', 'N/A')}")
+                app_logger.debug(f"ℹ️ runステップをスキップ [{i+1}]", name=step.get('name', 'N/A'))
+                print(f"   ℹ️ runステップをスキップ [{i+1}]: {step.get('name', 'N/A')}")
         
         # その他のタイプ
         else:
             # 必要に応じて他のステップタイプも処理
-            app_logger.warning(f"⚠️ 未処理のステップタイプ: {step_type}")
-            print(f"   ⚠️ 未処理のステップタイプ: {step_type}")
+            app_logger.warning(f"⚠️ 未処理のステップタイプ [{i+1}]: {step_type}")
+            print(f"   ⚠️ 未処理のステップタイプ [{i+1}]: {step_type}")
             # outputがあれば表示
             other_output = step.get('output', '')
             if other_output:
@@ -189,8 +213,12 @@ async def on_chat_resume(thread: ThreadDict):
                     'type': 'system',
                     'content': other_output,
                     'id': step_id,
-                    'created_at': created_at
+                    'created_at': created_at,
+                    'order': i  # 順序を保持
                 })
+    
+    # messages_to_displayをorderでソートしてから表示（念のため）
+    messages_to_display.sort(key=lambda x: x.get('order', 0))
     
     # メッセージを順番に表示
     for msg in messages_to_display:
@@ -350,11 +378,17 @@ async def on_message(message: cl.Message):
     
     app_logger.debug(f"🤖 AI応答生成開始", model=model, has_system_prompt=bool(system_prompt))
     
+    # メッセージ履歴を管理
+    message_history = cl.user_session.get("message_history", [])
+    
     # Responses APIを使用してAI応答を生成
-    messages = [
-        {"role": "system", "content": system_prompt} if system_prompt else {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": user_input}
-    ]
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    
+    # 履歴を追加（最大10メッセージ）
+    messages.extend(message_history[-10:])
+    messages.append({"role": "user", "content": user_input})
     
     # Tools機能の状態をログに記録
     tools_enabled = tools_config.is_enabled()
@@ -362,27 +396,77 @@ async def on_message(message: cl.Message):
         enabled_tools = tools_config.get_enabled_tools()
         app_logger.debug(f"🔧 Tools機能有効", tools=enabled_tools)
     
+    # AIメッセージを先に作成（ストリーミング用）
+    ai_message = cl.Message(content="", author="Assistant")
+    await ai_message.send()
+    
     response_text = ""
     tool_calls = None
+    previous_response_id = cl.user_session.get("previous_response_id")
     
-    # Responses APIを呼び出し
+    # ============================================================
+    # Responses APIを呼び出し（ストリーミング有効）
+    # OpenAI SDKはResponses APIを正式にサポートしています
+    # 参照: openai responseAPI reference (Text generation).md
+    # 参照: openai responseAPI reference (Conversation state).md
+    # ============================================================
     async for chunk in responses_handler.create_response(
         messages=messages,
         model=model,
-        stream=False,
-        use_tools=tools_enabled
+        stream=True,
+        use_tools=tools_enabled,
+        previous_response_id=previous_response_id
     ):
         if "error" in chunk:
             app_logger.error(f"API Error: {chunk['error']}")
+            await ai_message.update(content=f"❌ エラー: {chunk['error']}")
             response_text = None
             break
+        
+        # Responses APIのストリーミングイベント処理
+        elif chunk.get("type") == "text_delta":
+            # テキストデルタイベント
+            if chunk.get("content"):
+                response_text += chunk["content"]
+                await ai_message.stream_token(chunk["content"])
+        
+        elif chunk.get("type") == "response_complete":
+            # 完了イベント
+            if chunk.get("id"):
+                cl.user_session.set("previous_response_id", chunk["id"])
+            if chunk.get("output_text") and not response_text:
+                response_text = chunk["output_text"]
+                await ai_message.update(content=response_text)
+            break
+        
+        # Chat Completions APIのフォールバック処理
         elif "choices" in chunk and chunk["choices"]:
             choice = chunk["choices"][0]
-            message_data = choice.get("message", {})
             
-            # 通常の応答
-            if message_data.get("content"):
-                response_text = message_data["content"]
+            # ストリーミングモード（deltaを処理）
+            if "delta" in choice:
+                delta = choice["delta"]
+                
+                # テキストコンテンツの処理
+                if delta.get("content"):
+                    response_text += delta["content"]
+                    await ai_message.stream_token(delta["content"])
+                
+                # finish_reasonがある場合は完了
+                if choice.get("finish_reason"):
+                    # response_idを保存（会話継続用）
+                    if "id" in chunk:
+                        cl.user_session.set("previous_response_id", chunk["id"])
+                    break
+            
+            # 非ストリーミングモード（messageを処理）
+            elif "message" in choice:
+                message_data = choice["message"]
+                
+                # 通常の応答
+                if message_data.get("content"):
+                    response_text = message_data["content"]
+                    await ai_message.update(content=response_text)
             
             # ツール呼び出しがある場合
             if message_data.get("tool_calls"):
@@ -421,23 +505,69 @@ async def on_message(message: cl.Message):
                 messages.extend(tool_results)
                 
                 # ツール結果を踏まえて再度APIを呼び出し
+                final_msg = cl.Message(content="", author="Assistant")
+                await final_msg.send()
+                
                 async for final_chunk in responses_handler.create_response(
                     messages=messages,
                     model=model,
-                    stream=False,
-                    use_tools=False  # ツールは一度だけ使用
+                    stream=True,
+                    use_tools=False,  # ツールは一度だけ使用
+                    previous_response_id=previous_response_id
                 ):
-                    if "choices" in final_chunk and final_chunk["choices"]:
-                        final_message = final_chunk["choices"][0].get("message", {})
-                        if final_message.get("content"):
-                            response_text = final_message["content"]
+                    # Responses APIイベント
+                    if final_chunk.get("type") == "text_delta":
+                        if final_chunk.get("content"):
+                            response_text += final_chunk["content"]
+                            await final_msg.stream_token(final_chunk["content"])
+                    
+                    elif final_chunk.get("type") == "response_complete":
+                        if final_chunk.get("output_text") and not response_text:
+                            response_text = final_chunk["output_text"]
+                            await final_msg.update(content=response_text)
                         break
+                    
+                    # Chat Completions APIフォールバック
+                    elif "choices" in final_chunk and final_chunk["choices"]:
+                        final_choice = final_chunk["choices"][0]
+                        
+                        # ストリーミングモード
+                        if "delta" in final_choice:
+                            delta = final_choice["delta"]
+                            if delta.get("content"):
+                                response_text += delta["content"]
+                                await final_msg.stream_token(delta["content"])
+                            
+                            if final_choice.get("finish_reason"):
+                                break
+                        
+                        # 非ストリーミングモード
+                        elif "message" in final_choice:
+                            final_message = final_choice["message"]
+                            if final_message.get("content"):
+                                response_text = final_message["content"]
+                                await final_msg.update(content=response_text)
+                            break
+            
+            # response_idを保存（会話継続用）
+            if "id" in chunk:
+                cl.user_session.set("previous_response_id", chunk["id"])
+            
             break
     
     if response_text:
-        # AI応答を送信
-        ai_message = cl.Message(content=response_text, author="Assistant")
-        await ai_message.send()
+        # ストリーミング完了時の処理
+        await ai_message.update()  # ストリーミング完了を通知
+        
+        # メッセージ履歴を更新
+        message_history.append({"role": "user", "content": user_input})
+        message_history.append({"role": "assistant", "content": response_text})
+        
+        # 履歴を20メッセージに制限
+        if len(message_history) > 20:
+            message_history = message_history[-20:]
+        
+        cl.user_session.set("message_history", message_history)
         
         # AI応答をログに記録
         app_logger.ai_response(response_text, model)
@@ -458,6 +588,7 @@ async def on_message(message: cl.Message):
         error_msg = "❌ AI応答の生成に失敗しました。"
         await cl.Message(content=error_msg, author="System").send()
         app_logger.error(f"AI応答生成失敗", user_input=user_input[:100])
+        await ai_message.update(content="❌ AI応答の生成に失敗しました。")
 
 
 async def handle_command(user_input: str):
@@ -724,6 +855,8 @@ async def start_new_chat():
     cl.user_session.set("message_count", 0)
     cl.user_session.set("total_tokens", 0)
     cl.user_session.set("system_prompt", "")
+    cl.user_session.set("previous_response_id", None)
+    cl.user_session.set("message_history", [])
 
 
 async def set_api_key(api_key: str):

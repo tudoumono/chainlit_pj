@@ -69,6 +69,37 @@
 
 ### 追加の修正内容
 
+## 2025-08-14 (2回目の修正)
+
+### 問題5: Responses API仕様に従った実装
+- **問題内容**: 履歴復元後にメッセージを送っても応答が表示されない
+- **原因**: ストリーミング処理の実装が不正確
+- **修正内容**:
+  - Responses APIの仕様に従って実装を改善
+  - `client.responses.create()`の呼び出しを試み、利用不可の場合はchat.completionsにフォールバック
+  - 「openai responseAPI reference (Conversation state).md」に従ったメッセージ履歴管理
+  - ストリーミングチャンクの正しい処理（deltaの処理）
+  - Responses APIイベントとChat Completions APIの両方に対応
+
+### 重要なコメントの追加
+- **目的**: OpenAI SDKがResponses APIを正式にサポートしていることを明確化
+- **追加内容**:
+  - 公式APIリファレンスURLを記載
+  - ローカルドキュメントへの参照を記載
+  - SDKがResponses APIをサポートしていないという誤解を防ぐコメント
+  - フォールバックはSDKの制限ではなく環境問題であることを明記
+
+### 修正ファイル
+1. `utils/responses_handler.py` - Responses APIの正しい実装
+2. `app.py` - Responses APIイベントの正しい処理
+
+### 参考資料
+- `openai responseAPI reference (Text generation).md`
+- `openai responseAPI reference (Streaming API responses).md`
+- `openai responseAPI reference (Conversation state).md`
+
+### 追加の修正内容
+
 #### 問題3: Web検索ツールタイプの修正
 - **エラー内容**: `Invalid value: 'web_search'. Supported values are: 'function' and 'custom'.`
 - **原因**: Chat Completions APIでは`function`タイプのみサポート
@@ -122,3 +153,31 @@
 - メインファイル: `app.py` (v0.7.0)
 - バックアップ: `app_old.py.backup` (v0.6.1)
 - 起動方法: `python run.py` または `chainlit run app.py`
+
+## 2025-08-14 (3回目の修正)
+
+### 問題6: システムメッセージが履歴に保存される
+- **問題内容**: システムメッセージやウェルカムメッセージが履歴に保存されていた
+- **原因**: `data_layer.py`の`create_step`メソッドですべてのメッセージを保存していた
+- **修正内容**:
+  - `data_layer.py`の`create_step`メソッドにフィルタリング処理を追加
+  - 除外するメッセージパターンをリスト化
+  - 以下のメッセージを履歴から除外:
+    - 復元通知・復元完了メッセージ
+    - ウェルカムメッセージ
+    - コマンド応答メッセージ
+    - 確認・エラー・警告メッセージ
+    - ツール実行メッセージ
+
+## 2025-08-14 (4回目の修正)
+
+### 問題7: 履歴復元時の表示順序がおかしい
+- **問題内容**: 履歴から会話を復元した際にメッセージの順序が崩れる
+- **原因**: データベースからステップを取得する際のcreated_atのみでソートしていた
+- **修正内容**:
+  - `data_layer.py`の`get_thread`と`get_thread_steps`メソッドのSQLクエリを修正
+  - `ORDER BY created_at ASC, id ASC`に変更して、同じタイムスタンプのメッセージでもID順でソート
+  - `app.py`の`on_chat_resume`関数を改善
+  - 各メッセージにorderフィールドを追加して順序を保持
+  - 表示前に念のためorderでソート
+  - デバッグログを強化して順序番号を表示
