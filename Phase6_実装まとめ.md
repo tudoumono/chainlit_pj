@@ -65,6 +65,7 @@ class PersonaManager:
 | `/persona` | ペルソナ一覧を表示 |
 | `/persona [名前]` | 指定したペルソナに切り替え |
 | `/persona create` | インタラクティブにペルソナを作成 |
+| `/persona edit [名前]` | 既存ペルソナのモデル/Temperature/プロンプト等を編集 |
 | `/persona delete [名前]` | 指定したペルソナを削除 |
 
 ## デフォルトペルソナ

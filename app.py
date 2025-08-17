@@ -327,6 +327,9 @@ async def on_chat_start():
 - `/tools disable [ツール名]` - 特定のツールを無効化
 - `/persona` - ペルソナ一覧を表示
 - `/persona [名前]` - ペルソナを切り替え
+- `/persona create` - 新しいペルソナを作成
+- `/persona edit [名前]` - ペルソナを編集
+- `/persona delete [名前]` - ペルソナを削除
 
 💡 **ヒント**: 
 - 会話は永続的に保存されます
@@ -671,6 +674,14 @@ async def handle_command(user_input: str):
                         content="❌ 削除するペルソナ名を指定してください。\n例: `/persona delete creative`",
                         author="System"
                     ).send()
+            elif action == "edit" or action == "update":
+                if len(parts) > 2:
+                    await edit_persona(parts[2])
+                else:
+                    await cl.Message(
+                        content="❌ 編集するペルソナ名を指定してください。\n例: `/persona edit プログラミング専門家`",
+                        author="System"
+                    ).send()
             else:
                 await switch_persona(parts[1])
     else:
@@ -708,6 +719,13 @@ async def show_help():
 - `/tools disable file_search` - ファイル検索を無効化
 - `/tools enable all` - すべてのツールを有効化
 - `/tools disable all` - すべてのツールを無効化
+
+## ペルソナ管理
+- `/persona` - ペルソナ一覧を表示
+- `/persona [名前]` - ペルソナを切り替え
+- `/persona create` - 新しいペルソナを作成
+- `/persona edit [名前]` - ペルソナを編集（モデル/Temperature/プロンプト等）
+- `/persona delete [名前]` - カスタムペルソナを削除
 
 ## 💡 ヒント
 - 会話履歴は自動的に保存されます
@@ -1134,6 +1152,157 @@ async def delete_persona(persona_name: str):
             content=f"❌ ペルソナ '{persona_name}' が見つかりません。",
             author="System"
         ).send()
+
+
+async def edit_persona(persona_name: str):
+    """既存のペルソナを編集"""
+    personas = await persona_manager.get_all_personas()
+    
+    # 名前でペルソナを検索
+    target_persona = None
+    for persona in personas:
+        if persona.get("name").lower() == persona_name.lower():
+            target_persona = persona
+            break
+    
+    if not target_persona:
+        await cl.Message(
+            content=f"❌ ペルソナ '{persona_name}' が見つかりません。`/persona` で一覧を確認してください。",
+            author="System"
+        ).send()
+        return
+    
+    # 現在の設定を表示
+    current_info = persona_manager.format_persona_info(target_persona)
+    await cl.Message(
+        content=f"📝 現在の設定:\n\n{current_info}\n\n編集する項目を選択してください。",
+        author="System"
+    ).send()
+    
+    # 編集する項目を選択
+    res = await cl.AskActionMessage(
+        content="どの項目を編集しますか？",
+        actions=[
+            cl.Action(name="edit_model", value="model", label="🤖 モデル"),
+            cl.Action(name="edit_temp", value="temperature", label="🌡️ Temperature"),
+            cl.Action(name="edit_prompt", value="system_prompt", label="📝 システムプロンプト"),
+            cl.Action(name="edit_desc", value="description", label="📄 説明"),
+            cl.Action(name="cancel", value="cancel", label="❌ キャンセル")
+        ],
+        timeout=60
+    ).send()
+    
+    if not res or res.get("value") == "cancel":
+        await cl.Message(content="❌ 編集をキャンセルしました", author="System").send()
+        return
+    
+    edit_type = res.get("value")
+    updates = {}
+    
+    if edit_type == "model":
+        # モデルを選択
+        models_list = "\n".join([f"- {model}" for model in persona_manager.AVAILABLE_MODELS])
+        res = await cl.AskUserMessage(
+            content=f"🤖 新しい**モデル**を選択してください:\n{models_list}\n\n現在: {target_persona.get('model', 'gpt-4o-mini')}",
+            timeout=60
+        ).send()
+        
+        if res:
+            input_model = res["output"].strip()
+            if input_model in persona_manager.AVAILABLE_MODELS:
+                updates["model"] = input_model
+            else:
+                await cl.Message(
+                    content=f"❌ 無効なモデル名です。利用可能なモデルから選択してください。",
+                    author="System"
+                ).send()
+                return
+    
+    elif edit_type == "temperature":
+        # Temperatureを入力
+        res = await cl.AskUserMessage(
+            content=f"🌡️ 新しい**Temperature** (0.0-2.0)を入力してください:\n現在: {target_persona.get('temperature', 0.7)}",
+            timeout=60
+        ).send()
+        
+        if res:
+            try:
+                temp_value = float(res["output"])
+                if 0.0 <= temp_value <= 2.0:
+                    updates["temperature"] = temp_value
+                else:
+                    await cl.Message(
+                        content="❌ Temperatureは0.0から2.0の範囲で入力してください。",
+                        author="System"
+                    ).send()
+                    return
+            except ValueError:
+                await cl.Message(
+                    content="❌ 無効な数値です。",
+                    author="System"
+                ).send()
+                return
+    
+    elif edit_type == "system_prompt":
+        # システムプロンプトを入力
+        res = await cl.AskUserMessage(
+            content=f"📝 新しい**システムプロンプト**を入力してください:\n\n現在の設定:\n{target_persona.get('system_prompt', '')[:200]}...",
+            timeout=120
+        ).send()
+        
+        if res:
+            updates["system_prompt"] = res["output"]
+    
+    elif edit_type == "description":
+        # 説明を入力
+        res = await cl.AskUserMessage(
+            content=f"📄 新しい**説明**を入力してください:\n現在: {target_persona.get('description', '')}",
+            timeout=60
+        ).send()
+        
+        if res:
+            updates["description"] = res["output"]
+    
+    # 更新を実行
+    if updates:
+        success = await persona_manager.update_persona(
+            target_persona.get("id", target_persona.get("name")),
+            updates
+        )
+        
+        if success:
+            # 更新後のペルソナを取得
+            updated_persona = await persona_manager.get_persona(
+                target_persona.get("id", target_persona.get("name"))
+            )
+            
+            # 現在アクティブなペルソナの場合は再設定
+            active_persona = cl.user_session.get("active_persona")
+            if active_persona and active_persona.get("name") == target_persona.get("name"):
+                cl.user_session.set("active_persona", updated_persona)
+                
+                # モデルが変更された場合
+                if "model" in updates:
+                    settings = cl.user_session.get("settings", {})
+                    settings["DEFAULT_MODEL"] = updates["model"]
+                    cl.user_session.set("settings", settings)
+                    responses_handler.update_model(updates["model"])
+                
+                # システムプロンプトが変更された場合
+                if "system_prompt" in updates:
+                    cl.user_session.set("system_prompt", updates["system_prompt"])
+            
+            # 確認メッセージ
+            updated_info = persona_manager.format_persona_info(updated_persona) if updated_persona else "更新されました"
+            await cl.Message(
+                content=f"✅ ペルソナ '{persona_name}' を更新しました\n\n{updated_info}",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content=f"❌ ペルソナの更新に失敗しました。",
+                author="System"
+            ).send()
 
 
 async def show_status():
