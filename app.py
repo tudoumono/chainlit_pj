@@ -89,10 +89,11 @@ except Exception as e:
 from utils.config import config_manager
 from utils.responses_handler import responses_handler
 from utils.tools_config import tools_config
+from utils.persona_manager import persona_manager  # Phase 6: ペルソナ管理
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
-VERSION = "0.7.0 (Responses API + Tools)"
+VERSION = "0.8.0 (Phase 6: Personas + Advanced Settings)"
 
 
 @cl.on_chat_resume
@@ -276,6 +277,20 @@ async def on_chat_start():
     cl.user_session.set("message_count", 0)
     cl.user_session.set("total_tokens", 0)
     
+    # Phase 6: デフォルトペルソナを初期化
+    await persona_manager.initialize_default_personas()
+    
+    # アクティブなペルソナを取得して設定
+    active_persona = await persona_manager.get_active_persona()
+    if active_persona:
+        cl.user_session.set("active_persona", active_persona)
+        cl.user_session.set("system_prompt", active_persona.get("system_prompt", ""))
+        
+        # モデルを更新
+        if active_persona.get("model"):
+            settings["DEFAULT_MODEL"] = active_persona.get("model")
+            cl.user_session.set("settings", settings)
+    
     # 現在のユーザー情報を取得
     current_user = cl.user_session.get("user")
     app_logger.info(f"👤 新しいセッション開始", user=current_user.identifier if current_user else "anonymous")
@@ -310,6 +325,8 @@ async def on_chat_start():
 - `/tools` - Tools機能の設定を表示
 - `/tools enable [ツール名]` - 特定のツールを有効化
 - `/tools disable [ツール名]` - 特定のツールを無効化
+- `/persona` - ペルソナ一覧を表示
+- `/persona [名前]` - ペルソナを切り替え
 
 💡 **ヒント**: 
 - 会話は永続的に保存されます
@@ -637,6 +654,25 @@ async def handle_command(user_input: str):
                 content="❌ コマンド形式が正しくありません。\n例: `/tools enable web_search`",
                 author="System"
             ).send()
+    elif cmd == "/persona" or cmd == "/personas":
+        if len(parts) == 1:
+            await show_personas()
+        elif len(parts) == 2:
+            await switch_persona(parts[1])
+        else:
+            action = parts[1].lower()
+            if action == "create":
+                await create_persona_interactive()
+            elif action == "delete":
+                if len(parts) > 2:
+                    await delete_persona(parts[2])
+                else:
+                    await cl.Message(
+                        content="❌ 削除するペルソナ名を指定してください。\n例: `/persona delete creative`",
+                        author="System"
+                    ).send()
+            else:
+                await switch_persona(parts[1])
     else:
         await cl.Message(
             content=f"❌ 不明なコマンド: {cmd}\n`/help` でコマンド一覧を確認してください。",
@@ -893,6 +929,211 @@ async def test_connection():
         app_logger.error(f"API接続テスト失敗", error=message)
     
     await cl.Message(content=result, author="System").send()
+
+
+async def show_personas():
+    """ペルソナ一覧を表示"""
+    personas = await persona_manager.get_all_personas()
+    active_persona = cl.user_session.get("active_persona")
+    
+    message = "# 🎭 ペルソナ一覧\n\n"
+    
+    for persona in personas:
+        is_active = active_persona and persona.get("name") == active_persona.get("name")
+        status = "✅ [アクティブ]" if is_active else ""
+        
+        message += f"## {persona.get('name')} {status}\n"
+        message += f"{persona.get('description', 'No description')}\n"
+        message += f"- 🤖 Model: {persona.get('model', 'gpt-4o-mini')}\n"
+        message += f"- 🌡️ Temperature: {persona.get('temperature', 0.7)}\n"
+        
+        if persona.get('tags'):
+            message += f"- 🏷️ Tags: {', '.join(persona.get('tags', []))}\n"
+        message += "\n"
+    
+    message += "\n💡 **使い方**: `/persona [ペルソナ名]` で切り替え\n"
+    message += "💡 **新規作成**: `/persona create` で新しいペルソナを作成\n"
+    message += "💡 **削除**: `/persona delete [ペルソナ名]` で削除"
+    
+    await cl.Message(content=message, author="System").send()
+
+
+async def switch_persona(persona_name: str):
+    """ペルソナを切り替え"""
+    personas = await persona_manager.get_all_personas()
+    
+    # 名前でペルソナを検索
+    target_persona = None
+    for persona in personas:
+        if persona.get("name").lower() == persona_name.lower():
+            target_persona = persona
+            break
+    
+    if target_persona:
+        # アクティブに設定
+        if hasattr(persona_manager, 'set_active_persona'):
+            await persona_manager.set_active_persona(target_persona.get("id", target_persona.get("name")))
+        
+        # セッションを更新
+        cl.user_session.set("active_persona", target_persona)
+        cl.user_session.set("system_prompt", target_persona.get("system_prompt", ""))
+        
+        # モデルを更新
+        settings = cl.user_session.get("settings", {})
+        if target_persona.get("model"):
+            settings["DEFAULT_MODEL"] = target_persona.get("model")
+            cl.user_session.set("settings", settings)
+            
+            # responses_handlerのモデルも更新
+            responses_handler.update_model(target_persona.get("model"))
+        
+        # 表示
+        info = persona_manager.format_persona_info(target_persona)
+        await cl.Message(
+            content=f"✅ ペルソナを切り替えました\n\n{info}",
+            author="System"
+        ).send()
+    else:
+        await cl.Message(
+            content=f"❌ ペルソナ '{persona_name}' が見つかりません。`/persona` で一覧を確認してください。",
+            author="System"
+        ).send()
+
+
+async def create_persona_interactive():
+    """インタラクティブにペルソナを作成"""
+    # 名前を入力
+    res = await cl.AskUserMessage(
+        content="🎭 新しいペルソナの**名前**を入力してください:",
+        timeout=60
+    ).send()
+    
+    if not res:
+        await cl.Message(content="❌ キャンセルされました", author="System").send()
+        return
+    
+    name = res["output"]
+    
+    # 説明を入力
+    res = await cl.AskUserMessage(
+        content="📝 ペルソナの**説明**を入力してください:",
+        timeout=60
+    ).send()
+    
+    if not res:
+        await cl.Message(content="❌ キャンセルされました", author="System").send()
+        return
+    
+    description = res["output"]
+    
+    # システムプロンプトを入力
+    res = await cl.AskUserMessage(
+        content="🤖 **システムプロンプト**を入力してください (AIの振る舞いを定義):",
+        timeout=120
+    ).send()
+    
+    if not res:
+        await cl.Message(content="❌ キャンセルされました", author="System").send()
+        return
+    
+    system_prompt = res["output"]
+    
+    # モデルを選択
+    models_list = "\n".join([f"- {model}" for model in persona_manager.AVAILABLE_MODELS])
+    res = await cl.AskUserMessage(
+        content=f"🤖 使用する**モデル**を選択してください:\n{models_list}\n\n(デフォルト: gpt-4o-mini)",
+        timeout=60
+    ).send()
+    
+    model = "gpt-4o-mini"
+    if res:
+        input_model = res["output"].strip()
+        if input_model in persona_manager.AVAILABLE_MODELS:
+            model = input_model
+    
+    # Temperatureを入力
+    res = await cl.AskUserMessage(
+        content="🌡️ **Temperature** (0.0-2.0, デフォルト: 0.7)\n低い値=より一貫性がある、高い値=より創造的:",
+        timeout=60
+    ).send()
+    
+    temperature = 0.7
+    if res:
+        try:
+            temp_value = float(res["output"])
+            if 0.0 <= temp_value <= 2.0:
+                temperature = temp_value
+        except ValueError:
+            pass
+    
+    # タグを入力
+    res = await cl.AskUserMessage(
+        content="🏷️ **タグ** (カンマ区切り、例: technical, creative, business):",
+        timeout=60
+    ).send()
+    
+    tags = []
+    if res:
+        tags = [tag.strip() for tag in res["output"].split(",") if tag.strip()]
+    
+    # ペルソナを作成
+    persona_data = {
+        "name": name,
+        "description": description,
+        "system_prompt": system_prompt,
+        "model": model,
+        "temperature": temperature,
+        "tags": tags
+    }
+    
+    persona_id = await persona_manager.create_persona(persona_data)
+    
+    # 確認メッセージ
+    info = persona_manager.format_persona_info(persona_data)
+    await cl.Message(
+        content=f"✅ ペルソナを作成しました\n\n{info}\n\n`/persona {name}` で切り替えできます。",
+        author="System"
+    ).send()
+
+
+async def delete_persona(persona_name: str):
+    """ペルソナを削除"""
+    personas = await persona_manager.get_all_personas()
+    
+    # 名前でペルソナを検索
+    target_persona = None
+    for persona in personas:
+        if persona.get("name").lower() == persona_name.lower():
+            target_persona = persona
+            break
+    
+    if target_persona:
+        # デフォルトペルソナは削除できない
+        if target_persona.get("name") in ["汎用アシスタント", "プログラミング専門家", "ビジネスアナリスト", "クリエイティブライター", "学習サポーター"]:
+            await cl.Message(
+                content="❌ デフォルトペルソナは削除できません。",
+                author="System"
+            ).send()
+            return
+        
+        # 削除実行
+        success = await persona_manager.delete_persona(target_persona.get("id", target_persona.get("name")))
+        
+        if success:
+            await cl.Message(
+                content=f"✅ ペルソナ '{persona_name}' を削除しました。",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content=f"❌ ペルソナ '{persona_name}' の削除に失敗しました。",
+                author="System"
+            ).send()
+    else:
+        await cl.Message(
+            content=f"❌ ペルソナ '{persona_name}' が見つかりません。",
+            author="System"
+        ).send()
 
 
 async def show_status():

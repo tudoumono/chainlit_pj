@@ -98,6 +98,37 @@
 - `openai responseAPI reference (Streaming API responses).md`
 - `openai responseAPI reference (Conversation state).md`
 
+## 2025-08-17
+
+### Phase 6 高度な設定機能の実装
+
+#### 実装内容
+- **ペルソナ管理機能**: システムプロンプト、モデル選択、Temperature設定を含むペルソナ機能
+- **モデル選択**: GPT-4o、GPT-4o-mini、GPT-4-turboなどのモデルを動的に選択可能
+- **インタラクティブUI**: ペルソナの作成、切り替え、削除をコマンドで操作
+
+#### 新規ファイル
+1. `utils/persona_manager.py` - ペルソナ管理モジュール
+
+#### 修正ファイル
+1. `app.py` - Phase 6機能の統合
+   - on_chat_startにペルソナ初期化追加
+   - ペルソナ関連コマンドの実装
+   - show_personas、switch_persona、create_persona_interactive、delete_persona関数追加
+
+#### 追加コマンド
+- `/persona` - ペルソナ一覧を表示
+- `/persona [名前]` - ペルソナを切り替え
+- `/persona create` - 新しいペルソナを作成
+- `/persona delete [名前]` - ペルソナを削除
+
+#### デフォルトペルソナ
+1. 汎用アシスタント - 一般的な質問対応
+2. プログラミング専門家 - コーディング特化
+3. ビジネスアナリスト - ビジネス分析特化
+4. クリエイティブライター - 創造的文章作成
+5. 学習サポーター - 教育・学習支援
+
 ### 追加の修正内容
 
 #### 問題3: Web検索ツールタイプの修正

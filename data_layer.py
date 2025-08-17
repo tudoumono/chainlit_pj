@@ -112,6 +112,34 @@ class SQLiteDataLayer(BaseDataLayer):
             )
         """)
         
+        # ペルソナテーブル（Phase 6で追加）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS personas (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                system_prompt TEXT,
+                model TEXT,
+                temperature REAL,
+                max_tokens INTEGER,
+                description TEXT,
+                tags TEXT,
+                is_active BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # デフォルトペルソナの挿入（存在しない場合のみ）
+        cursor.execute("""
+            INSERT OR IGNORE INTO personas (id, name, system_prompt, model, temperature, description, is_active)
+            VALUES 
+            ('default', 'デフォルト', 'あなたは親切で役立つアシスタントです。', 'gpt-4o-mini', 0.7, '標準的なアシスタント', 1),
+            ('professional', 'プロフェッショナル', 'あなたはビジネスプロフェッショナルのアシスタントです。丁寧で専門的な言葉遣いを心がけ、正確な情報を提供します。', 'gpt-4o', 0.5, 'ビジネス向けフォーマルなアシスタント', 0),
+            ('creative', 'クリエイティブ', 'あなたは創造的で革新的なアイデアを生み出すクリエイティブアシスタントです。斬新な視点と想像力豊かな提案を心がけます。', 'gpt-4o', 0.9, '創造的なアイデア出しに特化', 0),
+            ('technical', 'テクニカル', 'あなたは技術的な専門知識を持つアシスタントです。プログラミング、システム設計、技術的な問題解決に精通しています。', 'gpt-4o', 0.3, '技術的な質問に特化', 0),
+            ('educator', '教育者', 'あなたは教育者として振る舞います。わかりやすく段階的に説明し、学習者の理解を深めることを目的とします。', 'gpt-4o-mini', 0.6, '教育・学習サポートに特化', 0)
+        """)
+        
         conn.commit()
         conn.close()
     
@@ -679,6 +707,191 @@ class SQLiteDataLayer(BaseDataLayer):
     async def build_debug_url(self) -> str:
         """デバッグURLを構築"""
         return "http://localhost:8000/debug"
+    
+    # =============== ペルソナ関連のメソッド（Phase 6で追加） ===============
+    
+    async def get_persona(self, persona_id: str) -> Optional[Dict]:
+        """ペルソナを取得"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM personas WHERE id = ?", (persona_id,)
+            )
+            row = await cursor.fetchone()
+            
+            if row:
+                return {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "system_prompt": row["system_prompt"],
+                    "model": row["model"],
+                    "temperature": row["temperature"],
+                    "max_tokens": row["max_tokens"],
+                    "description": row["description"],
+                    "tags": json.loads(row["tags"]) if row["tags"] else [],
+                    "is_active": row["is_active"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                }
+        return None
+    
+    async def get_persona_by_name(self, name: str) -> Optional[Dict]:
+        """名前からペルソナを取得"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM personas WHERE name = ?", (name,)
+            )
+            row = await cursor.fetchone()
+            
+            if row:
+                return {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "system_prompt": row["system_prompt"],
+                    "model": row["model"],
+                    "temperature": row["temperature"],
+                    "max_tokens": row["max_tokens"],
+                    "description": row["description"],
+                    "tags": json.loads(row["tags"]) if row["tags"] else [],
+                    "is_active": row["is_active"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                }
+        return None
+    
+    async def list_personas(self) -> List[Dict]:
+        """全てのペルソナを取得"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM personas ORDER BY name ASC"
+            )
+            rows = await cursor.fetchall()
+            
+            personas = []
+            for row in rows:
+                personas.append({
+                    "id": row["id"],
+                    "name": row["name"],
+                    "system_prompt": row["system_prompt"],
+                    "model": row["model"],
+                    "temperature": row["temperature"],
+                    "max_tokens": row["max_tokens"],
+                    "description": row["description"],
+                    "tags": json.loads(row["tags"]) if row["tags"] else [],
+                    "is_active": row["is_active"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                })
+            
+            return personas
+    
+    async def get_active_persona(self) -> Optional[Dict]:
+        """アクティブなペルソナを取得"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM personas WHERE is_active = 1 LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            
+            if row:
+                return {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "system_prompt": row["system_prompt"],
+                    "model": row["model"],
+                    "temperature": row["temperature"],
+                    "max_tokens": row["max_tokens"],
+                    "description": row["description"],
+                    "tags": json.loads(row["tags"]) if row["tags"] else [],
+                    "is_active": row["is_active"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                }
+        return None
+    
+    async def create_persona(self, persona: Dict) -> str:
+        """新しいペルソナを作成"""
+        persona_id = persona.get("id") or str(uuid.uuid4())
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                INSERT INTO personas 
+                (id, name, system_prompt, model, temperature, max_tokens, description, tags, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                persona_id,
+                persona.get("name"),
+                persona.get("system_prompt"),
+                persona.get("model", "gpt-4o-mini"),
+                persona.get("temperature", 0.7),
+                persona.get("max_tokens"),
+                persona.get("description"),
+                json.dumps(persona.get("tags", [])),
+                persona.get("is_active", 0)
+            ))
+            await db.commit()
+        
+        return persona_id
+    
+    async def update_persona(self, persona_id: str, updates: Dict) -> None:
+        """ペルソナを更新"""
+        async with aiosqlite.connect(self.db_path) as db:
+            update_fields = []
+            values = []
+            
+            if "name" in updates:
+                update_fields.append("name = ?")
+                values.append(updates["name"])
+            if "system_prompt" in updates:
+                update_fields.append("system_prompt = ?")
+                values.append(updates["system_prompt"])
+            if "model" in updates:
+                update_fields.append("model = ?")
+                values.append(updates["model"])
+            if "temperature" in updates:
+                update_fields.append("temperature = ?")
+                values.append(updates["temperature"])
+            if "max_tokens" in updates:
+                update_fields.append("max_tokens = ?")
+                values.append(updates["max_tokens"])
+            if "description" in updates:
+                update_fields.append("description = ?")
+                values.append(updates["description"])
+            if "tags" in updates:
+                update_fields.append("tags = ?")
+                values.append(json.dumps(updates["tags"]))
+            if "is_active" in updates:
+                update_fields.append("is_active = ?")
+                values.append(updates["is_active"])
+            
+            if update_fields:
+                update_fields.append("updated_at = CURRENT_TIMESTAMP")
+                values.append(persona_id)
+                
+                query = f"UPDATE personas SET {', '.join(update_fields)} WHERE id = ?"
+                await db.execute(query, values)
+                await db.commit()
+    
+    async def set_active_persona(self, persona_id: str) -> None:
+        """ペルソナをアクティブに設定"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # 全てのペルソナを非アクティブにする
+            await db.execute("UPDATE personas SET is_active = 0")
+            # 指定のペルソナをアクティブにする
+            await db.execute(
+                "UPDATE personas SET is_active = 1 WHERE id = ?",
+                (persona_id,)
+            )
+            await db.commit()
+    
+    async def delete_persona(self, persona_id: str) -> None:
+        """ペルソナを削除"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM personas WHERE id = ?", (persona_id,))
+            await db.commit()
 
 
 # データレイヤーを設定
