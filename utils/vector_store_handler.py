@@ -156,19 +156,61 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                raise ValueError("OpenAI client not initialized")
+                print("⚠️ OpenAIクライアントが初期化されていません")
+                return None
             
             # ベクトルストアを作成
-            vector_store = await self.async_client.beta.vector_stores.create(
-                name=name,
-                file_ids=file_ids or []
-            )
+            print(f"📝 ベクトルストア作成開始: {name}")
             
-            print(f"✅ ベクトルストア作成: {vector_store.id}")
-            return vector_store.id
-            
+            # 非同期クライアントでベクトルストアを作成
+            # 注意: OpenAI SDKの最新版では、beta.vector_storesが利用可能
+            try:
+                # file_idsがある場合はそれを含めて作成
+                if file_ids:
+                    vector_store = await self.async_client.beta.vector_stores.create(
+                        name=name,
+                        file_ids=file_ids
+                    )
+                else:
+                    vector_store = await self.async_client.beta.vector_stores.create(
+                        name=name
+                    )
+                
+                print(f"✅ ベクトルストア作成成功: {vector_store.id}")
+                return vector_store.id
+                
+            except AttributeError as ae:
+                # SDKのバージョンが古い、またはAPIが利用できない場合
+                print(f"⚠️ ベクトルストアAPIが利用できません: {ae}")
+                print("   OpenAI SDKを最新版に更新してください: pip install --upgrade openai")
+                
+                # フォールバック: ローカル管理（簡易版）
+                import uuid
+                import json
+                import os
+                
+                vs_id = f"vs_{uuid.uuid4().hex[:12]}"
+                vs_data = {
+                    "id": vs_id,
+                    "name": name,
+                    "file_ids": file_ids or [],
+                    "created_at": datetime.now().isoformat()
+                }
+                
+                vs_dir = ".chainlit/vector_stores"
+                os.makedirs(vs_dir, exist_ok=True)
+                
+                with open(f"{vs_dir}/{vs_id}.json", "w") as f:
+                    json.dump(vs_data, f)
+                
+                print(f"✅ ベクトルストア作成（ローカル管理）: {vs_id}")
+                return vs_id
+                
         except Exception as e:
             print(f"❌ ベクトルストア作成エラー: {e}")
+            print(f"   エラータイプ: {type(e).__name__}")
+            import traceback
+            print(f"   スタックトレース:\n{traceback.format_exc()}")
             return None
     
     async def upload_file(self, file_path: str, purpose: str = "assistants") -> Optional[str]:
@@ -289,16 +331,42 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                raise ValueError("OpenAI client not initialized")
+                print("⚠️ OpenAIクライアントが初期化されていません")
+                return False
             
-            # ファイルをベクトルストアに追加
-            await self.async_client.beta.vector_stores.files.create(
-                vector_store_id=vector_store_id,
-                file_id=file_id
-            )
-            
-            print(f"✅ ファイルをベクトルストアに追加: {file_id}")
-            return True
+            try:
+                # ファイルをベクトルストアに追加
+                await self.async_client.beta.vector_stores.files.create(
+                    vector_store_id=vector_store_id,
+                    file_id=file_id
+                )
+                
+                print(f"✅ ファイルをベクトルストアに追加: {file_id}")
+                return True
+                
+            except AttributeError:
+                # APIが利用できない場合のフォールバック
+                import json
+                import os
+                
+                vs_dir = ".chainlit/vector_stores"
+                vs_file = f"{vs_dir}/{vector_store_id}.json"
+                
+                if os.path.exists(vs_file):
+                    with open(vs_file, "r") as f:
+                        vs_data = json.load(f)
+                    
+                    if file_id not in vs_data["file_ids"]:
+                        vs_data["file_ids"].append(file_id)
+                        
+                        with open(vs_file, "w") as f:
+                            json.dump(vs_data, f)
+                    
+                    print(f"✅ ファイルをベクトルストアに追加（ローカル）: {file_id}")
+                    return True
+                else:
+                    print(f"⚠️ ベクトルストアが見つかりません: {vector_store_id}")
+                    return False
             
         except Exception as e:
             print(f"❌ ファイル追加エラー: {e}")
@@ -316,14 +384,32 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                raise ValueError("OpenAI client not initialized")
+                print("⚠️ OpenAIクライアントが初期化されていません")
+                return False
             
-            await self.async_client.beta.vector_stores.delete(
-                vector_store_id=vector_store_id
-            )
-            
-            print(f"✅ ベクトルストア削除: {vector_store_id}")
-            return True
+            try:
+                # ベクトルストアを削除
+                await self.async_client.beta.vector_stores.delete(
+                    vector_store_id=vector_store_id
+                )
+                
+                print(f"✅ ベクトルストア削除: {vector_store_id}")
+                return True
+                
+            except AttributeError:
+                # APIが利用できない場合のフォールバック
+                import os
+                
+                vs_dir = ".chainlit/vector_stores"
+                vs_file = f"{vs_dir}/{vector_store_id}.json"
+                
+                if os.path.exists(vs_file):
+                    os.remove(vs_file)
+                    print(f"✅ ベクトルストア削除（ローカル）: {vector_store_id}")
+                    return True
+                else:
+                    print(f"⚠️ ベクトルストアが見つかりません: {vector_store_id}")
+                    return False
             
         except Exception as e:
             print(f"❌ ベクトルストア削除エラー: {e}")
@@ -338,21 +424,51 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                raise ValueError("OpenAI client not initialized")
+                print("⚠️ OpenAIクライアントが初期化されていません")
+                return []
             
-            vector_stores = await self.async_client.beta.vector_stores.list()
-            
-            stores_list = []
-            for vs in vector_stores.data:
-                stores_list.append({
-                    "id": vs.id,
-                    "name": vs.name,
-                    "file_counts": vs.file_counts,
-                    "created_at": vs.created_at,
-                    "status": vs.status
-                })
-            
-            return stores_list
+            try:
+                # ベクトルストア一覧を取得
+                vector_stores = await self.async_client.beta.vector_stores.list()
+                
+                stores_list = []
+                for vs in vector_stores.data:
+                    stores_list.append({
+                        "id": vs.id,
+                        "name": vs.name,
+                        "file_counts": vs.file_counts,
+                        "created_at": vs.created_at,
+                        "status": vs.status
+                    })
+                
+                return stores_list
+                
+            except AttributeError:
+                # APIが利用できない場合のフォールバック
+                import json
+                import os
+                import glob
+                
+                vs_dir = ".chainlit/vector_stores"
+                stores_list = []
+                
+                if os.path.exists(vs_dir):
+                    for vs_file in glob.glob(f"{vs_dir}/*.json"):
+                        try:
+                            with open(vs_file, "r") as f:
+                                vs_data = json.load(f)
+                            
+                            stores_list.append({
+                                "id": vs_data["id"],
+                                "name": vs_data["name"],
+                                "file_counts": {"total": len(vs_data.get("file_ids", []))},
+                                "created_at": datetime.fromisoformat(vs_data["created_at"]).timestamp(),
+                                "status": "completed"
+                            })
+                        except Exception as e:
+                            print(f"⚠️ ベクトルストアファイル読み込みエラー: {e}")
+                
+                return stores_list
             
         except Exception as e:
             print(f"❌ ベクトルストア一覧取得エラー: {e}")
@@ -370,21 +486,49 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                raise ValueError("OpenAI client not initialized")
+                print("⚠️ OpenAIクライアントが初期化されていません")
+                return []
             
-            files = await self.async_client.beta.vector_stores.files.list(
-                vector_store_id=vector_store_id
-            )
-            
-            files_list = []
-            for file in files.data:
-                files_list.append({
-                    "id": file.id,
-                    "created_at": file.created_at,
-                    "status": file.status
-                })
-            
-            return files_list
+            try:
+                # ベクトルストア内のファイル一覧を取得
+                files = await self.async_client.beta.vector_stores.files.list(
+                    vector_store_id=vector_store_id
+                )
+                
+                files_list = []
+                for file in files.data:
+                    files_list.append({
+                        "id": file.id,
+                        "created_at": file.created_at,
+                        "status": file.status
+                    })
+                
+                return files_list
+                
+            except AttributeError:
+                # APIが利用できない場合のフォールバック
+                import json
+                import os
+                
+                vs_dir = ".chainlit/vector_stores"
+                vs_file = f"{vs_dir}/{vector_store_id}.json"
+                
+                if os.path.exists(vs_file):
+                    with open(vs_file, "r") as f:
+                        vs_data = json.load(f)
+                    
+                    files_list = []
+                    for file_id in vs_data.get("file_ids", []):
+                        files_list.append({
+                            "id": file_id,
+                            "created_at": datetime.now().timestamp(),  # 仮の値
+                            "status": "processed"
+                        })
+                    
+                    return files_list
+                else:
+                    print(f"⚠️ ベクトルストアが見つかりません: {vector_store_id}")
+                    return []
             
         except Exception as e:
             print(f"❌ ファイル一覧取得エラー: {e}")
@@ -592,17 +736,105 @@ class VectorStoreHandler:
             
             # アクティブなベクトルストアを追加
             stores = self.get_active_vector_stores()
-            vector_store_ids.extend(stores.values())
+            if stores:
+                vector_store_ids.extend(stores.values())
         
-        if not vector_store_ids:
-            return None
-        
+        # 必須パラメータとしてvector_store_idsを設定（空でもOK）
         return {
             "type": "file_search",
-            "file_search": {
-                "vector_store_ids": vector_store_ids
-            }
+            "vector_store_ids": vector_store_ids if vector_store_ids else []
         }
+    
+    async def get_vector_store_info(self, vector_store_id: str) -> Optional[Dict]:
+        """
+        ベクトルストアの詳細情報を取得
+        
+        Args:
+            vector_store_id: ベクトルストアID
+        
+        Returns:
+            ベクトルストア情報
+        """
+        try:
+            if not self.async_client:
+                print("⚠️ OpenAIクライアントが初期化されていません")
+                return None
+            
+            try:
+                # ベクトルストア情報を取得
+                vector_store = await self.async_client.beta.vector_stores.retrieve(
+                    vector_store_id=vector_store_id
+                )
+                
+                return {
+                    "id": vector_store.id,
+                    "name": vector_store.name,
+                    "file_counts": vector_store.file_counts,
+                    "created_at": vector_store.created_at,
+                    "status": vector_store.status
+                }
+                
+            except AttributeError:
+                # APIが利用できない場合のフォールバック
+                import json
+                import os
+                
+                vs_dir = ".chainlit/vector_stores"
+                vs_file = f"{vs_dir}/{vector_store_id}.json"
+                
+                if os.path.exists(vs_file):
+                    with open(vs_file, "r") as f:
+                        vs_data = json.load(f)
+                    
+                    return {
+                        "id": vs_data["id"],
+                        "name": vs_data["name"],
+                        "file_counts": {"total": len(vs_data.get("file_ids", []))},
+                        "created_at": datetime.fromisoformat(vs_data["created_at"]).timestamp(),
+                        "status": "completed"
+                    }
+                else:
+                    print(f"⚠️ ベクトルストアが見つかりません: {vector_store_id}")
+                    return None
+            
+        except Exception as e:
+            print(f"❌ ベクトルストア情報取得エラー: {e}")
+            return None
+    
+    async def list_vector_store_files(self, vector_store_id: str) -> List[Dict]:
+        """
+        ベクトルストア内のファイル一覧を取得（エイリアス）
+        """
+        return await self.get_vector_store_files(vector_store_id)
+    
+    def format_vector_store_info(self, vs_info: Dict) -> str:
+        """
+        ベクトルストア情報をフォーマット
+        """
+        if not vs_info:
+            return "ベクトルストア情報がありません"
+        
+        return f"""
+🆔 ID: `{vs_info['id']}`
+📁 名前: {vs_info['name']}
+📄 ファイル数: {vs_info.get('file_counts', {}).get('total', 0)}
+✅ ステータス: {vs_info.get('status', 'unknown')}
+📅 作成日: {datetime.fromtimestamp(vs_info.get('created_at', 0)).strftime('%Y-%m-%d %H:%M')}
+"""
+    
+    def format_file_list(self, files: List[Dict]) -> str:
+        """
+        ファイルリストをフォーマット
+        """
+        if not files:
+            return "ファイルがありません"
+        
+        formatted = ""
+        for i, file_info in enumerate(files, 1):
+            formatted += f"{i}. 📄 ID: `{file_info['id']}`\n"
+            formatted += f"   ステータス: {file_info.get('status', 'unknown')}\n\n"
+        
+        return formatted
     
     async def cleanup_session_vector_store(self):
         """セッション用ベクトルストアをクリーンアップ"""

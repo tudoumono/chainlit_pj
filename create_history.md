@@ -410,3 +410,52 @@
 - **修正内容**:
   - `utils/tools_config.py`の`build_tools_parameter`メソッドを修正
   - file_searchツールにvector_store_idsを空のリストでも必須パラメータとして設定
+
+### 問題3: ベクトルストアAPIが存在しない
+- **エラー**: `'AsyncBeta' object has no attribute 'vector_stores'`
+- **原因**: OpenAI SDKのベクトルストアAPIはAssistants API経由でのみ利用可能
+- **修正内容**: ChatGPTの回答を参考に、簡易版の実装に変更
+  - `utils/vector_store_handler.py`の以下のメソッドを簡易版に修正:
+    - `create_vector_store`: JSONファイルでローカル管理
+    - `add_file_to_vector_store`: JSONファイルにファイルIDを追加
+    - `delete_vector_store`: JSONファイルを削除
+    - `list_vector_stores`: JSONファイルから一覧取得
+    - `get_vector_store_files`: JSONファイルからファイルID取得
+    - `build_file_search_tool`: 空のvector_store_idsを返す
+  - 新規メソッド追加:
+    - `get_vector_store_info`: ベクトルストア情報取得
+    - `list_vector_store_files`: `get_vector_store_files`のエイリアス
+    - `format_vector_store_info`: 情報のフォーマット
+    - `format_file_list`: ファイルリストのフォーマット
+
+### 解決策
+- ベクトルストア情報をローカルJSONファイルで管理
+- `.chainlit/vector_stores/`ディレクトリに保存
+- ファイルアップロード機能は維持
+- 将来的にAssistants APIを使用した実装に移行可能
+
+## 2025-08-18 (ベクトルストアAPI修正)
+
+### 誤認識の修正
+- **誤り**: "Assistants API経由でのみ利用可能"と判断
+- **正しい情報**: Responses APIでもvector_storesの作成・使用が可能
+- **参考資料**: 
+  - ChatGPTの回答: https://chatgpt.com/share/68a319e5-37e8-8003-a7f1-de1551924a26
+  - 技術記事: https://developer.mamezou-tech.com/en/blogs/2025/03/19/openai-responses-api-filesearch/
+
+### 修正内容
+- `utils/vector_store_handler.py`の各メソッドを再修正:
+  - `create_vector_store`: OpenAI APIを使用、失敗時はローカル管理にフォールバック
+  - `add_file_to_vector_store`: 同様にフォールバック付き
+  - `list_vector_stores`: API優先、フォールバック付き
+  - `build_file_search_tool`: アクティブなベクトルストアIDを使用
+
+### 実装方針
+1. **APIファースト**: まずOpenAI APIを試す
+2. **フォールバック**: AttributeError時はローカルJSON管理
+3. **ハイブリッド実装**: APIとローカル管理の両方に対応
+
+### 注意事項
+- OpenAI SDKのバージョンが1.57.4以上であることを確認
+- エラー時は自動的にローカル管理にフォールバック
+- 将来的に完全なAPI実装に移行可能
