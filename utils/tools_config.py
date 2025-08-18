@@ -247,15 +247,12 @@ class ToolsConfig:
         
         # ファイル検索ツール (file_searchタイプとして定義)
         if self.is_tool_enabled("file_search"):
+            # vector_store_idsは必須パラメータなので、空でも設定する
+            # 実際のベクトルストアIDはvector_store_handlerから取得する必要がある
             file_search_config = {
-                "type": "file_search"
+                "type": "file_search",
+                "vector_store_ids": []  # 空のリストでも必須
             }
-            # ファイルIDがある場合は追加
-            file_ids = self.get_search_file_ids()
-            if file_ids:
-                file_search_config["file_search"] = {
-                    "vector_store_ids": file_ids
-                }
             tools.append(file_search_config)
         
         # コードインタープリター (code_interpreterタイプとして定義)

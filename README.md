@@ -24,7 +24,35 @@ OpenAI APIを活用したプロフェッショナル向けのAIチャットア�
 | Phase 3 | データベース基盤 | ✅ 完了 |
 | Phase 4 | 基本的なチャット機能 | ✅ 完了 |
 | Phase 5 | セッション永続化の強化 | ✅ 完了 |
-| Phase 6-12 | 高度な機能 | ⏳ 今後実装 |
+| Phase 6 | ペルソナ管理 | ✅ 完了 |
+| Phase 7 | ベクトルストア | ✅ 完了 |
+| Phase 8-12 | 高度な機能 | ⏳ 今後実装 |
+
+## ⚠️ 重要な注意事項
+
+### Chainlit Action APIについて
+
+**ChainlitのAction APIでは、`payload`パラメータは必ず辞書型（dict）である必要があります。**
+
+```python
+# ❌ 間違い
+cl.Action(name="action", payload="yes", label="はい")  # エラー
+
+# ✅ 正しい
+cl.Action(name="action", payload={"action": "yes"}, label="はい")
+```
+
+詳細は[Chainlit Action APIガイド](docs/CHAINLIT_ACTION_GUIDE.md)を参照してください。
+
+ヘルパー関数を使用することを推奨します：
+```python
+from utils.action_helper import ask_confirmation, ask_choice
+
+# 確認ダイアログ
+if await ask_confirmation("削除してもよろしいですか？"):
+    # 削除処理
+    pass
+```
 
 ## 🚀 クイックスタート
 

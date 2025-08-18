@@ -92,6 +92,7 @@ from utils.responses_handler import responses_handler
 from utils.tools_config import tools_config
 from utils.persona_manager import persona_manager  # Phase 6: ペルソナ管理
 from utils.vector_store_handler import vector_store_handler  # Phase 7: ベクトルストア
+from utils.action_helper import ask_confirmation  # Actionヘルパー
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
@@ -530,12 +531,12 @@ async def on_message(message: cl.Message):
             res = await cl.AskActionMessage(
                 content=f"{len(uploaded_file_ids)}件のファイルをナレッジベースに追加しますか？",
                 actions=[
-                    cl.Action(name="add_to_kb", value="yes", label="はい"),
-                    cl.Action(name="skip", value="no", label="いいえ")
+                    cl.Action(name="add_to_kb", payload={"action": "yes"}, label="はい"),
+                    cl.Action(name="skip", payload={"action": "no"}, label="いいえ")
                 ]
             ).send()
             
-            if res and res.get("value") == "yes":
+            if res and res.get("payload", {}).get("action") == "yes":
                 # ベクトルストアに追加
                 await add_files_to_knowledge_base(uploaded_file_ids)
         
@@ -606,7 +607,8 @@ async def on_message(message: cl.Message):
     ):
         if "error" in chunk:
             app_logger.error(f"API Error: {chunk['error']}")
-            await ai_message.update(content=f"❌ エラー: {chunk['error']}")
+            ai_message.content = f"❌ エラー: {chunk['error']}"
+            await ai_message.update()
             response_text = None
             break
         
@@ -1483,20 +1485,20 @@ async def edit_persona(persona_name: str):
     res = await cl.AskActionMessage(
         content="どの項目を編集しますか？",
         actions=[
-            cl.Action(name="edit_model", value="model", label="🤖 モデル"),
-            cl.Action(name="edit_temp", value="temperature", label="🌡️ Temperature"),
-            cl.Action(name="edit_prompt", value="system_prompt", label="📝 システムプロンプト"),
-            cl.Action(name="edit_desc", value="description", label="📄 説明"),
-            cl.Action(name="cancel", value="cancel", label="❌ キャンセル")
+            cl.Action(name="edit_model", payload={"type": "model"}, label="🤖 モデル"),
+            cl.Action(name="edit_temp", payload={"type": "temperature"}, label="🌡️ Temperature"),
+            cl.Action(name="edit_prompt", payload={"type": "system_prompt"}, label="📝 システムプロンプト"),
+            cl.Action(name="edit_desc", payload={"type": "description"}, label="📄 説明"),
+            cl.Action(name="cancel", payload={"type": "cancel"}, label="❌ キャンセル")
         ],
         timeout=60
     ).send()
     
-    if not res or res.get("value") == "cancel":
+    if not res or res.get("payload", {}).get("type") == "cancel":
         await cl.Message(content="❌ 編集をキャンセルしました", author="System").send()
         return
     
-    edit_type = res.get("value")
+    edit_type = res.get("payload", {}).get("type")
     updates = {}
     
     if edit_type == "model":
@@ -1827,16 +1829,12 @@ async def show_knowledge_base():
 
 async def clear_knowledge_base():
     """ナレッジベースをクリア"""
-    # 確認メッセージ
-    res = await cl.AskActionMessage(
-        content="⚠️ ナレッジベースのすべてのファイルを削除します。よろしいですか？",
-        actions=[
-            cl.Action(name="confirm", value="yes", label="はい、削除します"),
-            cl.Action(name="cancel", value="no", label="キャンセル")
-        ]
-    ).send()
-    
-    if res and res.get("value") == "yes":
+    # ヘルパー関数を使用したシンプルな確認
+    if await ask_confirmation(
+        "⚠️ ナレッジベースのすべてのファイルを削除します。よろしいですか？",
+        yes_label="はい、削除します",
+        no_label="キャンセル"
+    ):
         try:
             # ベクトルストアを削除
             vector_stores = cl.user_session.get("vector_stores", {})
@@ -1903,11 +1901,11 @@ async def show_settings():
     
     # アクションボタン
     actions = [
-        cl.Action(name="toggle_proxy", value="proxy", label="🌐 プロキシトグル"),
-        cl.Action(name="set_proxy_url", value="proxy_url", label="🔗 プロキシURL設定"),
-        cl.Action(name="toggle_tools", value="tools", label="🔧 Tools全体トグル"),
-        cl.Action(name="toggle_web_search", value="web_search", label="🔍 Web検索トグル"),
-        cl.Action(name="toggle_file_search", value="file_search", label="📄 ファイル検索トグル"),
+        cl.Action(name="toggle_proxy", payload={"action": "proxy"}, label="🌐 プロキシトグル"),
+        cl.Action(name="set_proxy_url", payload={"action": "proxy_url"}, label="🔗 プロキシURL設定"),
+        cl.Action(name="toggle_tools", payload={"action": "tools"}, label="🔧 Tools全体トグル"),
+        cl.Action(name="toggle_web_search", payload={"action": "web_search"}, label="🔍 Web検索トグル"),
+        cl.Action(name="toggle_file_search", payload={"action": "file_search"}, label="📄 ファイル検索トグル"),
     ]
     
     res = await cl.AskActionMessage(
@@ -1921,7 +1919,7 @@ async def show_settings():
 
 async def handle_settings_action(action_response):
     """設定アクションを処理"""
-    action = action_response.get("value")
+    action = action_response.get("payload", {}).get("action")
     
     if action == "proxy":
         # プロキシの有効/無効をトグル

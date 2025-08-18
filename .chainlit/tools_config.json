@@ -8,7 +8,7 @@
       "auto_invoke": true
     },
     "file_search": {
-      "enabled": false,
+      "enabled": true,
       "name": "file_search",
       "description": "Search through uploaded files and documents",
       "auto_invoke": true,

@@ -9,7 +9,8 @@ from typing import Dict, List, Optional, Tuple, Any
 from openai import OpenAI, AsyncOpenAI
 import asyncio
 from datetime import datetime
-import chainlit as cl
+# Chainlitのインポートは型ヒント用のみ
+# 実行時にはChainlitファイルオブジェクトを直接扱う
 import aiofiles
 import mimetypes
 from pathlib import Path
@@ -65,13 +66,24 @@ class VectorStoreHandler:
     
     def _init_clients(self):
         """OpenAIクライアントを初期化"""
+        print(f"🔧 OpenAIクライアント初期化中...")
+        
         if not self.api_key or self.api_key == "your_api_key_here":
+            print(f"⚠️ OpenAI APIキーが設定されていません")
             return
+        
+        print(f"✅ APIキー確認済み: {self.api_key[:8]}...{self.api_key[-4:]}")
         
         # プロキシ設定を確認
         proxy_enabled = os.getenv("PROXY_ENABLED", "false").lower() == "true"
         http_proxy = os.getenv("HTTP_PROXY", "") if proxy_enabled else ""
         https_proxy = os.getenv("HTTPS_PROXY", "") if proxy_enabled else ""
+        
+        print(f"🌐 プロキシ設定:")
+        print(f"   プロキシ有効: {proxy_enabled}")
+        if proxy_enabled:
+            print(f"   HTTPプロキシ: {http_proxy if http_proxy else '未設定'}")
+            print(f"   HTTPSプロキシ: {https_proxy if https_proxy else '未設定'}")
         
         # httpxクライアントの設定
         http_client = None
@@ -85,20 +97,46 @@ class VectorStoreHandler:
             if https_proxy:
                 proxies["https://"] = https_proxy
             
-            http_client = httpx.Client(proxies=proxies)
-            async_http_client = httpx.AsyncClient(proxies=proxies)
+            print(f"🔄 httpxクライアントをプロキシ設定で作成")
+            
+            # タイムアウト設定を追加
+            timeout = httpx.Timeout(60.0, connect=10.0)
+            
+            http_client = httpx.Client(
+                proxies=proxies,
+                timeout=timeout,
+                verify=True  # SSL証明書の検証を有効化
+            )
+            async_http_client = httpx.AsyncClient(
+                proxies=proxies,
+                timeout=timeout,
+                verify=True  # SSL証明書の検証を有効化
+            )
         
-        # 同期クライアント
-        self.client = OpenAI(
-            api_key=self.api_key,
-            http_client=http_client
-        )
-        
-        # 非同期クライアント
-        self.async_client = AsyncOpenAI(
-            api_key=self.api_key,
-            http_client=async_http_client
-        )
+        try:
+            # 同期クライアント
+            self.client = OpenAI(
+                api_key=self.api_key,
+                http_client=http_client,
+                max_retries=3,  # リトライ回数を設定
+                timeout=60.0     # デフォルトタイムアウト
+            )
+            
+            # 非同期クライアント
+            self.async_client = AsyncOpenAI(
+                api_key=self.api_key,
+                http_client=async_http_client,
+                max_retries=3,  # リトライ回数を設定
+                timeout=60.0     # デフォルトタイムアウト
+            )
+            
+            print(f"✅ OpenAIクライアント初期化完了")
+            
+        except Exception as e:
+            print(f"❌ OpenAIクライアント初期化エラー: {e}")
+            print(f"   エラータイプ: {type(e).__name__}")
+            self.client = None
+            self.async_client = None
     
     def update_api_key(self, api_key: str):
         """APIキーを更新"""
@@ -148,18 +186,33 @@ class VectorStoreHandler:
             if not self.async_client:
                 raise ValueError("OpenAI client not initialized")
             
+            # ファイルサイズ確認
+            file_size = os.path.getsize(file_path)
+            print(f"📤 ファイルアップロード開始: {file_path}")
+            print(f"   ファイルサイズ: {file_size:,} bytes")
+            print(f"   用途: {purpose}")
+            
             # ファイルを開いてアップロード
             with open(file_path, 'rb') as file:
+                print(f"📝 OpenAI APIへの送信開始...")
                 response = await self.async_client.files.create(
                     file=file,
-                    purpose=purpose
+                    purpose=purpose,
+                    timeout=60.0  # タイムアウトを60秒に設定
                 )
             
             print(f"✅ ファイルアップロード成功: {response.id}")
+            print(f"   ファイルID: {response.id}")
+            print(f"   ファイル名: {response.filename}")
+            print(f"   ステータス: {response.status if hasattr(response, 'status') else 'uploaded'}")
             return response.id
             
         except Exception as e:
+            import traceback
             print(f"❌ ファイルアップロードエラー: {e}")
+            print(f"   エラータイプ: {type(e).__name__}")
+            print(f"   エラー詳細: {str(e)}")
+            print(f"   スタックトレース:\n{traceback.format_exc()}")
             return None
     
     async def upload_file_from_bytes(self, file_bytes: bytes, filename: str, purpose: str = "assistants") -> Optional[str]:
@@ -178,17 +231,49 @@ class VectorStoreHandler:
             if not self.async_client:
                 raise ValueError("OpenAI client not initialized")
             
+            # ファイルサイズ確認
+            file_size = len(file_bytes)
+            print(f"📤 ファイルアップロード開始（バイトデータ）: {filename}")
+            print(f"   ファイルサイズ: {file_size:,} bytes")
+            print(f"   用途: {purpose}")
+            
+            # APIキーの確認
+            if not self.api_key or self.api_key == "your_api_key_here":
+                raise ValueError("OpenAI APIキーが設定されていません")
+            
+            print(f"📝 OpenAI APIへの送信開始...")
+            print(f"   APIエンドポイント: https://api.openai.com/v1/files")
+            
             # バイトデータからファイルを作成
             response = await self.async_client.files.create(
                 file=(filename, file_bytes),
-                purpose=purpose
+                purpose=purpose,
+                timeout=60.0  # タイムアウトを60秒に設定
             )
             
             print(f"✅ ファイルアップロード成功: {response.id}")
+            print(f"   ファイルID: {response.id}")
+            print(f"   ファイル名: {response.filename}")
+            print(f"   ステータス: {response.status if hasattr(response, 'status') else 'uploaded'}")
             return response.id
             
         except Exception as e:
+            import traceback
             print(f"❌ ファイルアップロードエラー: {e}")
+            print(f"   エラータイプ: {type(e).__name__}")
+            print(f"   エラー詳細: {str(e)}")
+            print(f"   スタックトレース:\n{traceback.format_exc()}")
+            
+            # 特定のエラーに対する対処法を提示
+            if "Connection error" in str(e):
+                print("   💡 対処法: ネットワーク接続を確認してください")
+                print("   💡 プロキシ設定が必要な場合は.envファイルで設定してください")
+            elif "timeout" in str(e).lower():
+                print("   💡 対処法: ファイルサイズが大きすぎる可能性があります")
+                print(f"   💡 現在のファイルサイズ: {file_size:,} bytes")
+            elif "api_key" in str(e).lower():
+                print("   💡 対処法: OpenAI APIキーを確認してください")
+            
             return None
     
     async def add_file_to_vector_store(self, vector_store_id: str, file_id: str) -> bool:
@@ -331,24 +416,81 @@ class VectorStoreHandler:
         ext = Path(filename).suffix.lower()
         return self.SUPPORTED_FILE_TYPES.get(ext, 'application/octet-stream')
     
-    async def process_uploaded_file(self, file: cl.File) -> Optional[str]:
+    async def process_uploaded_file(self, file) -> Optional[str]:
         """
         Chainlitでアップロードされたファイルを処理
         
         Args:
-            file: Chainlitのファイルオブジェクト
+            file: ChainlitのファイルオブジェクトまたはElement
         
         Returns:
             アップロードされたファイルID
         """
         try:
+            print(f"📄 ファイル処理開始: {file.name if hasattr(file, 'name') else '不明'}")
+            print(f"   ファイルタイプ: {type(file).__name__}")
+            print(f"   属性: {dir(file)}" if hasattr(file, '__dict__') else "")
+            
             # ファイルタイプを確認
             if not self.is_supported_file(file.name):
                 supported_exts = ', '.join(self.SUPPORTED_FILE_TYPES.keys())
                 raise ValueError(f"サポートされていないファイル形式です。対応形式: {supported_exts}")
             
             # ファイルを読み込み
-            file_bytes = file.content if hasattr(file, 'content') else open(file.path, 'rb').read()
+            print(f"📥 ファイルデータ読み込み中...")
+            file_bytes = None
+            
+            # content属性がある場合（まず内容を確認）
+            if hasattr(file, 'content') and file.content:
+                print(f"   content属性から読み込み")
+                file_bytes = file.content
+                print(f"   contentサイズ: {len(file_bytes):,} bytes")
+            # path属性がある場合
+            elif hasattr(file, 'path') and file.path:
+                print(f"   path属性から読み込み: {file.path}")
+                try:
+                    with open(file.path, 'rb') as f:
+                        file_bytes = f.read()
+                    print(f"   ファイル読み込み成功: {len(file_bytes):,} bytes")
+                except Exception as e:
+                    print(f"   ❌ ファイル読み込みエラー: {e}")
+                    raise ValueError(f"ファイルの読み込みに失敗しました: {e}")
+            # url属性がある場合（Chainlitの一時ファイルURL）
+            elif hasattr(file, 'url') and file.url:
+                print(f"   url属性が存在: {file.url}")
+                # URLからのダウンロードは現在未実装
+                raise ValueError("URLからのファイル取得は未実装です")
+            else:
+                # 利用可能な属性を表示
+                available_attrs = []
+                if hasattr(file, 'content'):
+                    available_attrs.append(f"content={file.content is not None}")
+                if hasattr(file, 'path'):
+                    available_attrs.append(f"path={file.path}")
+                if hasattr(file, 'url'):
+                    available_attrs.append(f"url={file.url}")
+                print(f"   利用可能な属性: {', '.join(available_attrs)}")
+                raise ValueError(f"ファイルのデータを読み込めません。属性: {available_attrs}")
+            
+            if not file_bytes or len(file_bytes) == 0:
+                print(f"   ⚠️ ファイルが空です")
+                # pathを再度確認
+                if hasattr(file, 'path') and file.path:
+                    import os
+                    if os.path.exists(file.path):
+                        file_size = os.path.getsize(file.path)
+                        print(f"   ファイルは存在します: {file.path} ({file_size} bytes)")
+                        if file_size > 0:
+                            print(f"   再度読み込みを試行...")
+                            with open(file.path, 'rb') as f:
+                                file_bytes = f.read()
+                            if file_bytes:
+                                print(f"   再読み込み成功: {len(file_bytes):,} bytes")
+                
+                if not file_bytes or len(file_bytes) == 0:
+                    raise ValueError("ファイルが空です")
+            
+            print(f"   ファイルサイズ: {len(file_bytes):,} bytes")
             
             # OpenAIにアップロード
             file_id = await self.upload_file_from_bytes(
@@ -360,7 +502,10 @@ class VectorStoreHandler:
             return file_id
             
         except Exception as e:
+            import traceback
             print(f"❌ ファイル処理エラー: {e}")
+            print(f"   エラータイプ: {type(e).__name__}")
+            print(f"   スタックトレース:\n{traceback.format_exc()}")
             raise e
     
     async def create_personal_vector_store(self, user_id: str) -> Optional[str]:
@@ -468,6 +613,54 @@ class VectorStoreHandler:
                 print("✅ セッション用ベクトルストアをクリーンアップしました")
             except Exception as e:
                 print(f"⚠️ セッション用ベクトルストアのクリーンアップに失敗: {e}")
+
+
+    async def process_uploaded_files(self, files: list) -> tuple[list[str], list[str]]:
+        """
+        複数のファイルを処理
+        
+        Args:
+            files: ファイルのリスト
+        
+        Returns:
+            (成功したファイルIDのリスト, 失敗したファイル名のリスト)
+        """
+        successful_ids = []
+        failed_files = []
+        
+        for file in files:
+            try:
+                file_id = await self.process_uploaded_file(file)
+                if file_id:
+                    successful_ids.append(file_id)
+                else:
+                    failed_files.append(file.name)
+            except Exception as e:
+                print(f"❌ ファイル処理失敗: {file.name} - {e}")
+                failed_files.append(file.name)
+        
+        return successful_ids, failed_files
+    
+    async def add_files_to_vector_store(self, vector_store_id: str, file_ids: list[str]) -> bool:
+        """
+        複数のファイルをベクトルストアに追加
+        
+        Args:
+            vector_store_id: ベクトルストアID
+            file_ids: ファイルIDのリスト
+        
+        Returns:
+            成功/失敗
+        """
+        try:
+            for file_id in file_ids:
+                success = await self.add_file_to_vector_store(vector_store_id, file_id)
+                if not success:
+                    print(f"⚠️ ファイル {file_id} のベクトルストアへの追加に失敗")
+            return True
+        except Exception as e:
+            print(f"❌ ファイルのベクトルストアへの追加エラー: {e}")
+            return False
 
 
 # グローバルインスタンス

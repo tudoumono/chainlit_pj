@@ -357,3 +357,56 @@
   - 各メッセージにorderフィールドを追加して順序を保持
   - 表示前に念のためorderでソート
   - デバッグログを強化して順序番号を表示
+
+## 2025-08-18 (ファイルアップロードエラー修正)
+
+### 問題1: Connection error
+- **エラー**: Connection error, Retrying request to /files
+- **修正内容**:
+  - `utils/vector_store_handler.py`に詳細なデバッグログを追加
+  - タイムアウトを60秒に設定
+  - エラー時のスタックトレース出力
+  - process_uploaded_filesメソッドを追加
+
+### 問題2: ファイルが空ですエラー
+- **エラー**: ValueError: ファイルが空です
+- **原因**: ChainlitのFileオブジェクトのcontent属性が空
+- **修正内容**:
+  - content属性が空の場合はpath属性から読み込み
+  - ファイル読み込みロジックを改善
+  - 再読み込み処理を追加
+  - 利用可能な属性のデバッグ情報を出力
+
+### 問題3: Chainlit Action API変更
+- **エラー**: `cl.Action`で`payload`フィールドが辞書型で必須
+- **修正内容**:
+  - すべての`cl.Action`で`payload`を辞書型に変更
+  - `payload="yes"`を`payload={"action": "yes"}`に変更
+  - 関連する`get("payload")`を`get("payload", {}).get("action")`に変更
+  - 対象箇所: `on_message`, `edit_persona`, `clear_knowledge_base`, `show_settings`関数
+
+### 今後の対策
+- **ドキュメント作成**: `docs/CHAINLIT_ACTION_GUIDE.md`を作成
+- **ヘルパー関数**: `utils/action_helper.py`を作成
+  - `ask_confirmation()` - 確認ダイアログ
+  - `ask_choice()` - 選択メニュー
+  - `create_action()` - 安全なAction作成
+  - `get_action_value()` - 安全な値取得
+- **README更新**: 重要な注意事項を追加
+
+## 2025-08-18 (API呼び出しエラー修正)
+
+### 問題1: Message.update()の引数エラー
+- **エラー**: `Message.update() got an unexpected keyword argument 'content'`
+- **原因**: ChainlitのMessage.update()メソッドはcontent引数を受け付けない
+- **修正内容**:
+  - `app.py`の610行目を修正
+  - `await ai_message.update(content=f"❌ エラー: {chunk['error']}")`を
+  - `ai_message.content = f"❌ エラー: {chunk['error']}"; await ai_message.update()`に変更
+
+### 問題2: file_searchツールのvector_store_idsエラー
+- **エラー**: `Missing required parameter: 'tools[1].vector_store_ids'`
+- **原因**: file_searchツールにvector_store_idsパラメータが不足
+- **修正内容**:
+  - `utils/tools_config.py`の`build_tools_parameter`メソッドを修正
+  - file_searchツールにvector_store_idsを空のリストでも必須パラメータとして設定
