@@ -592,24 +592,41 @@ class SQLiteDataLayer(BaseDataLayer):
             await db.execute("DELETE FROM steps WHERE id = ?", (step_id,))
             await db.commit()
     
-    async def create_element(self, element: ElementDict) -> None:
+    async def create_element(self, element) -> None:
         """エレメントを作成"""
+        # elementがFileオブジェクトの場合は辞書に変換
+        if hasattr(element, '__dict__'):
+            element_dict = {
+                "id": getattr(element, 'id', None),
+                "threadId": getattr(element, 'thread_id', None),
+                "forId": getattr(element, 'for_id', None),
+                "type": getattr(element, 'type', 'file'),
+                "name": getattr(element, 'name', None),
+                "display": getattr(element, 'display', None),
+                "mime": getattr(element, 'mime', None),
+                "path": getattr(element, 'path', None),
+                "url": getattr(element, 'url', None),
+                "content": getattr(element, 'content', None)
+            }
+        else:
+            element_dict = element
+        
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 INSERT INTO elements 
                 (id, thread_id, for_id, type, name, display, mime, path, url, content)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                element.get("id"),
-                element.get("threadId"),
-                element.get("forId"),
-                element.get("type"),
-                element.get("name"),
-                element.get("display"),
-                element.get("mime"),
-                element.get("path"),
-                element.get("url"),
-                element.get("content")
+                element_dict.get("id"),
+                element_dict.get("threadId"),
+                element_dict.get("forId"),
+                element_dict.get("type"),
+                element_dict.get("name"),
+                element_dict.get("display"),
+                element_dict.get("mime"),
+                element_dict.get("path"),
+                element_dict.get("url"),
+                element_dict.get("content")
             ))
             await db.commit()
     

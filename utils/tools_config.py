@@ -112,6 +112,19 @@ class ToolsConfig:
             return False
         return self.config.get("tools", {}).get(tool_name, {}).get("enabled", False)
     
+    def get_tools_status(self) -> Dict[str, bool]:
+        """
+        各ツールの有効/無効状態を取得
+        
+        Returns:
+            ツール名と状態の辞書
+        """
+        status = {}
+        if self.config and 'tools' in self.config:
+            for tool_name, tool_config in self.config['tools'].items():
+                status[tool_name] = tool_config.get('enabled', False)
+        return status
+    
     def get_enabled_tools(self) -> List[str]:
         """有効なツールのリストを取得"""
         if not self.is_enabled():

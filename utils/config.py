@@ -81,6 +81,49 @@ class ConfigManager:
         """APIキーを取得"""
         return os.getenv("OPENAI_API_KEY", "")
     
+    def update_env_value(self, key: str, value: str) -> bool:
+        """
+        .envファイルの特定の値を更新
+        
+        Args:
+            key: 更新するキー
+            value: 新しい値
+        
+        Returns:
+            成功/失敗
+        """
+        try:
+            # 現在の.envファイルを読み込み
+            env_path = os.path.join(os.getcwd(), '.env')
+            lines = []
+            key_found = False
+            
+            if os.path.exists(env_path):
+                with open(env_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip().startswith(f"{key}="):
+                            lines.append(f"{key}={value}\n")
+                            key_found = True
+                        else:
+                            lines.append(line)
+            
+            # キーが存在しない場合は追加
+            if not key_found:
+                lines.append(f"{key}={value}\n")
+            
+            # ファイルに書き込み
+            with open(env_path, 'w', encoding='utf-8') as f:
+                f.writelines(lines)
+            
+            # 環境変数も更新
+            os.environ[key] = value
+            
+            return True
+        
+        except Exception as e:
+            print(f"Error updating .env file: {e}")
+            return False
+    
     def set_api_key(self, api_key: str) -> bool:
         """APIキーを設定"""
         success = self.save_config({"OPENAI_API_KEY": api_key})

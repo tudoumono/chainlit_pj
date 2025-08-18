@@ -90,10 +90,11 @@ from utils.config import config_manager
 from utils.responses_handler import responses_handler
 from utils.tools_config import tools_config
 from utils.persona_manager import persona_manager  # Phase 6: ペルソナ管理
+from utils.vector_store_handler import vector_store_handler  # Phase 7: ベクトルストア
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
-VERSION = "0.8.0 (Phase 6: Personas + Advanced Settings)"
+VERSION = "0.9.0 (Phase 7: Vector Store + Knowledge Base)"
 
 
 @cl.on_chat_resume
@@ -280,6 +281,17 @@ async def on_chat_start():
     # Phase 6: デフォルトペルソナを初期化
     await persona_manager.initialize_default_personas()
     
+    # Phase 7: ベクトルストアの初期化
+    cl.user_session.set("vector_stores", {})
+    cl.user_session.set("uploaded_files", [])
+    
+    # ユーザーIDを取得して個人用ベクトルストアを確認
+    current_user = cl.user_session.get("user")
+    if current_user:
+        user_id = current_user.identifier
+        # TODO: データベースから既存のVS IDを取得
+        # 現在はセッションごとに新規作成
+    
     # アクティブなペルソナを取得して設定
     active_persona = await persona_manager.get_active_persona()
     if active_persona:
@@ -330,11 +342,13 @@ async def on_chat_start():
 - `/persona create` - 新しいペルソナを作成
 - `/persona edit [名前]` - ペルソナを編集
 - `/persona delete [名前]` - ペルソナを削除
+- `/vs` または `/vector` - ベクトルストア（知識ベース）管理
 
 💡 **ヒント**: 
 - 会話は永続的に保存されます
 - 左上の履歴ボタンから過去の会話にアクセスできます
 - Tools機能を有効にすると、Web検索やファイル検索が可能になります
+- 📄 ファイルを添付すると自動的にベクトルストアに追加され、AIが内容を理解します
 
 ## 📝 データレイヤーの状態
 - **タイプ**: {data_layer_type or '❌ 未設定'}
@@ -375,6 +389,54 @@ async def on_message(message: cl.Message):
     # メッセージカウントを増加
     message_count = cl.user_session.get("message_count", 0) + 1
     cl.user_session.set("message_count", message_count)
+    
+    # Phase 7: ファイルアップロード処理
+    if message.elements:
+        uploaded_file_ids = []
+        for element in message.elements:
+            if element.type == "file":
+                try:
+                    # ファイルを処理
+                    file_id = await vector_store_handler.process_uploaded_file(element)
+                    if file_id:
+                        uploaded_file_ids.append(file_id)
+                        
+                        # セッションのアップロードファイルリストに追加
+                        uploaded_files = cl.user_session.get("uploaded_files", [])
+                        uploaded_files.append({
+                            "file_id": file_id,
+                            "filename": element.name,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                        cl.user_session.set("uploaded_files", uploaded_files)
+                        
+                        await cl.Message(
+                            content=f"✅ ファイルをアップロードしました: {element.name}",
+                            author="System"
+                        ).send()
+                except Exception as e:
+                    await cl.Message(
+                        content=f"❌ ファイルアップロードエラー: {e}",
+                        author="System"
+                    ).send()
+        
+        # アップロードされたファイルをベクトルストアに追加するか確認
+        if uploaded_file_ids:
+            res = await cl.AskActionMessage(
+                content=f"{len(uploaded_file_ids)}件のファイルをナレッジベースに追加しますか？",
+                actions=[
+                    cl.Action(name="add_to_kb", value="yes", label="はい"),
+                    cl.Action(name="skip", value="no", label="いいえ")
+                ]
+            ).send()
+            
+            if res and res.get("value") == "yes":
+                # ベクトルストアに追加
+                await add_files_to_knowledge_base(uploaded_file_ids)
+        
+        # ファイルがアップロードされた場合でも、メッセージがあれば処理を続ける
+        if not user_input:
+            return
     
     # コマンド処理
     if user_input.startswith("/"):
@@ -647,6 +709,8 @@ async def handle_command(user_input: str):
         await test_connection()
     elif cmd == "/status":
         await show_status()
+    elif cmd == "/settings":
+        await show_settings()
     elif cmd == "/tools":
         if len(parts) == 1:
             await show_tools_status()
@@ -684,11 +748,142 @@ async def handle_command(user_input: str):
                     ).send()
             else:
                 await switch_persona(parts[1])
+    elif cmd == "/kb" or cmd == "/knowledge":
+        if len(parts) == 1:
+            await show_knowledge_base()
+        elif len(parts) > 1:
+            action = parts[1].lower()
+            if action == "clear":
+                await clear_knowledge_base()
+            elif action == "list":
+                await show_knowledge_base()
+            else:
+                await cl.Message(
+                    content="❌ 不明なコマンド\n使い方: `/kb` - 状態表示, `/kb clear` - クリア",
+                    author="System"
+                ).send()
+    elif cmd == "/vs" or cmd == "/vector":
+        if len(parts) == 1:
+            await show_vector_stores()
+        else:
+            action = parts[1].lower()
+            if action == "create":
+                if len(parts) > 2:
+                    await create_vector_store(parts[2])
+                else:
+                    await create_vector_store("Personal Knowledge Base")
+            elif action == "list":
+                await show_vector_stores()
+            elif action == "info":
+                if len(parts) > 2:
+                    await show_vector_store_info(parts[2])
+                else:
+                    await cl.Message(
+                        content="❌ ベクトルストアIDを指定してください。\n例: `/vs info vs_xxxxx`",
+                        author="System"
+                    ).send()
+            elif action == "delete":
+                if len(parts) > 2:
+                    await delete_vector_store(parts[2])
+                else:
+                    await cl.Message(
+                        content="❌ 削除するベクトルストアIDを指定してください。\n例: `/vs delete vs_xxxxx`",
+                        author="System"
+                    ).send()
+            elif action == "files":
+                if len(parts) > 2:
+                    await show_vector_store_files(parts[2])
+                else:
+                    await cl.Message(
+                        content="❌ ベクトルストアIDを指定してください。\n例: `/vs files vs_xxxxx`",
+                        author="System"
+                    ).send()
+            elif action == "use":
+                if len(parts) > 2:
+                    await set_personal_vector_store(parts[2])
+                else:
+                    await cl.Message(
+                        content="❌ 使用するベクトルストアIDを指定してください。\n例: `/vs use vs_xxxxx`",
+                        author="System"
+                    ).send()
+            else:
+                await cl.Message(
+                    content="❌ 不明なアクション: " + action + "\n使用可能: create, list, info, delete, files, use",
+                    author="System"
+                ).send()
     else:
         await cl.Message(
             content=f"❌ 不明なコマンド: {cmd}\n`/help` でコマンド一覧を確認してください。",
             author="System"
         ).send()
+
+
+async def handle_file_upload(elements):
+    """ファイルアップロードを処理"""
+    # ファイルを抽出
+    files = [element for element in elements if isinstance(element, cl.File)]
+    
+    if not files:
+        return
+    
+    # 個人ベクトルストアが設定されているか確認
+    personal_vs_id = cl.user_session.get("personal_vs_id") or vector_store_handler.personal_vs_id
+    
+    if not personal_vs_id:
+        # ベクトルストアがない場合は作成
+        await cl.Message(
+            content="📁 ベクトルストアがないため、新しく作成します...",
+            author="System"
+        ).send()
+        
+        personal_vs_id = await vector_store_handler.create_vector_store("Personal Knowledge Base")
+        
+        if personal_vs_id:
+            cl.user_session.set("personal_vs_id", personal_vs_id)
+            vector_store_handler.personal_vs_id = personal_vs_id
+        else:
+            await cl.Message(
+                content="❌ ベクトルストアの作成に失敗しました。",
+                author="System"
+            ).send()
+            return
+    
+    # ファイルをアップロード
+    await cl.Message(
+        content=f"🔄 {len(files)}個のファイルをアップロード中...",
+        author="System"
+    ).send()
+    
+    successful_ids, failed_files = await vector_store_handler.process_uploaded_files(files)
+    
+    # 結果を表示
+    if successful_ids:
+        # ベクトルストアに追加
+        success = await vector_store_handler.add_files_to_vector_store(personal_vs_id, successful_ids)
+        
+        if success:
+            message = f"✅ {len(successful_ids)}個のファイルをベクトルストアに追加しました\n\n"
+            message += "📁 ベクトルストアID: `" + personal_vs_id + "`\n\n"
+            message += "ファイルの内容に関する質問に答えられるようになりました。"
+            
+            if failed_files:
+                message += "\n\n⚠️ 失敗したファイル:\n"
+                for failed in failed_files:
+                    message += f"- {failed}\n"
+            
+            await cl.Message(content=message, author="System").send()
+        else:
+            await cl.Message(
+                content="❌ ファイルのベクトルストアへの追加に失敗しました。",
+                author="System"
+            ).send()
+    else:
+        message = "❌ すべてのファイルのアップロードに失敗しました\n\n"
+        if failed_files:
+            message += "失敗したファイル:\n"
+            for failed in failed_files:
+                message += f"- {failed}\n"
+        await cl.Message(content=message, author="System").send()
 
 
 async def show_help():
@@ -1303,6 +1498,407 @@ async def edit_persona(persona_name: str):
                 content=f"❌ ペルソナの更新に失敗しました。",
                 author="System"
             ).send()
+
+
+async def show_vector_stores():
+    """ベクトルストア一覧を表示"""
+    vector_stores = await vector_store_handler.list_vector_stores()
+    
+    if not vector_stores:
+        await cl.Message(
+            content="📁 ベクトルストアがありません。\n\n`/vs create [名前]` で作成できます。",
+            author="System"
+        ).send()
+        return
+    
+    message = "# 📁 ベクトルストア一覧\n\n"
+    
+    # 現在使用中のVSを確認
+    personal_vs_id = cl.user_session.get("personal_vs_id") or vector_store_handler.personal_vs_id
+    
+    for vs in vector_stores:
+        is_active = vs.get("id") == personal_vs_id
+        status = "✅ [使用中]" if is_active else ""
+        
+        message += f"## {vs.get('name', 'Unnamed')} {status}\n"
+        message += f"🆔 ID: `{vs.get('id')}`\n"
+        message += f"📄 ファイル数: {vs.get('file_counts', {}).get('total', 0)}\n"
+        message += f"✅ ステータス: {vs.get('status', 'unknown')}\n"
+        message += f"📅 作成日: {datetime.fromtimestamp(vs.get('created_at', 0)).strftime('%Y-%m-%d %H:%M')}\n\n"
+    
+    message += "\n💡 **コマンド**:\n"
+    message += "- `/vs create [名前]` - 新しいベクトルストアを作成\n"
+    message += "- `/vs info [ID]` - 詳細情報を表示\n"
+    message += "- `/vs files [ID]` - ファイル一覧を表示\n"
+    message += "- `/vs use [ID]` - ベクトルストアを使用\n"
+    message += "- `/vs delete [ID]` - ベクトルストアを削除"
+    
+    await cl.Message(content=message, author="System").send()
+
+
+async def create_vector_store(name: str = "Personal Knowledge Base"):
+    """ベクトルストアを作成"""
+    msg = cl.Message(content=f"🔄 ベクトルストア '{name}' を作成中...", author="System")
+    await msg.send()
+    
+    vs_id = await vector_store_handler.create_vector_store(name)
+    
+    if vs_id:
+        # セッションに保存
+        cl.user_session.set("personal_vs_id", vs_id)
+        vector_store_handler.personal_vs_id = vs_id
+        
+        await cl.Message(
+            content=f"✅ ベクトルストアを作成しました\n\n🆔 ID: `{vs_id}`\n📁 名前: {name}\n\nファイルをアップロードして知識ベースを構築できます。",
+            author="System"
+        ).send()
+    else:
+        await cl.Message(
+            content="❌ ベクトルストアの作成に失敗しました。APIキーを確認してください。",
+            author="System"
+        ).send()
+
+
+async def show_vector_store_info(vs_id: str):
+    """ベクトルストアの詳細情報を表示"""
+    vs_info = await vector_store_handler.get_vector_store_info(vs_id)
+    
+    if vs_info:
+        message = f"# 📁 ベクトルストア詳細\n\n"
+        message += vector_store_handler.format_vector_store_info(vs_info)
+        await cl.Message(content=message, author="System").send()
+    else:
+        await cl.Message(
+            content=f"❌ ベクトルストア `{vs_id}` が見つかりません。",
+            author="System"
+        ).send()
+
+
+async def delete_vector_store(vs_id: str):
+    """ベクトルストアを削除"""
+    # 確認メッセージ
+    res = await cl.AskUserMessage(
+        content=f"⚠️ ベクトルストア `{vs_id}` を削除しますか？\nこの操作は元に戻せません。(yes/no)",
+        timeout=30
+    ).send()
+    
+    if res and res["output"].lower() in ["yes", "y", "はい"]:
+        success = await vector_store_handler.delete_vector_store(vs_id)
+        
+        if success:
+            # 現在使用中のVSだった場合はクリア
+            if cl.user_session.get("personal_vs_id") == vs_id:
+                cl.user_session.set("personal_vs_id", None)
+                vector_store_handler.personal_vs_id = None
+            
+            await cl.Message(
+                content=f"✅ ベクトルストア `{vs_id}` を削除しました。",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content=f"❌ ベクトルストア `{vs_id}` の削除に失敗しました。",
+                author="System"
+            ).send()
+    else:
+        await cl.Message(
+            content="❌ 削除をキャンセルしました。",
+            author="System"
+        ).send()
+
+
+async def show_vector_store_files(vs_id: str):
+    """ベクトルストア内のファイル一覧を表示"""
+    files = await vector_store_handler.list_vector_store_files(vs_id)
+    
+    if files:
+        message = f"# 📄 ベクトルストアのファイル\n\n"
+        message += f"🆔 ベクトルストアID: `{vs_id}`\n\n"
+        message += "## ファイル一覧\n"
+        message += vector_store_handler.format_file_list(files)
+        await cl.Message(content=message, author="System").send()
+    else:
+        await cl.Message(
+            content=f"📁 ベクトルストア `{vs_id}` にファイルがありません。",
+            author="System"
+        ).send()
+
+
+async def set_personal_vector_store(vs_id: str):
+    """個人ベクトルストアを設定"""
+    # ベクトルストアが存在するか確認
+    vs_info = await vector_store_handler.get_vector_store_info(vs_id)
+    
+    if vs_info:
+        cl.user_session.set("personal_vs_id", vs_id)
+        vector_store_handler.personal_vs_id = vs_id
+        
+        await cl.Message(
+            content=f"✅ ベクトルストアを設定しました\n\n{vector_store_handler.format_vector_store_info(vs_info)}",
+            author="System"
+        ).send()
+    else:
+        await cl.Message(
+            content=f"❌ ベクトルストア `{vs_id}` が見つかりません。",
+            author="System"
+        ).send()
+
+
+async def add_files_to_knowledge_base(file_ids: List[str]):
+    """ファイルをナレッジベースに追加"""
+    try:
+        # 現在のユーザーを取得
+        current_user = cl.user_session.get("user")
+        user_id = current_user.identifier if current_user else "anonymous"
+        
+        # 個人用ベクトルストアを取得または作成
+        vector_stores = cl.user_session.get("vector_stores", {})
+        
+        if "personal" not in vector_stores:
+            # 個人用ベクトルストアを作成
+            vs_id = await vector_store_handler.create_personal_vector_store(user_id)
+            if vs_id:
+                vector_stores["personal"] = vs_id
+                cl.user_session.set("vector_stores", vector_stores)
+        
+        # ベクトルストアにファイルを追加
+        vs_id = vector_stores.get("personal")
+        if vs_id:
+            for file_id in file_ids:
+                success = await vector_store_handler.add_file_to_vector_store(vs_id, file_id)
+                if success:
+                    app_logger.info(f"ファイルをベクトルストアに追加: {file_id}")
+            
+            await cl.Message(
+                content=f"✅ {len(file_ids)}件のファイルをナレッジベースに追加しました\n\n今後の会話でこれらのファイルの内容を参照できます。",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content="❌ ベクトルストアの作成に失敗しました",
+                author="System"
+            ).send()
+            
+    except Exception as e:
+        app_logger.error(f"ナレッジベースへのファイル追加エラー: {e}")
+        await cl.Message(
+            content=f"❌ ナレッジベースへのファイル追加エラー: {e}",
+            author="System"
+        ).send()
+
+
+async def show_knowledge_base():
+    """ナレッジベースの状態を表示"""
+    vector_stores = cl.user_session.get("vector_stores", {})
+    uploaded_files = cl.user_session.get("uploaded_files", [])
+    
+    message = "# 📚 ナレッジベース\n\n"
+    
+    # ベクトルストア情報
+    message += "## ベクトルストア\n"
+    if vector_stores:
+        for store_type, store_id in vector_stores.items():
+            message += f"- **{store_type}**: `{store_id[:8]}...`\n"
+    else:
+        message += "*ベクトルストアが作成されていません*\n"
+    
+    message += "\n## アップロードされたファイル\n"
+    if uploaded_files:
+        for file_info in uploaded_files:
+            message += f"- 📄 {file_info['filename']} (ID: `{file_info['file_id'][:8]}...`)\n"
+    else:
+        message += "*ファイルがアップロードされていません*\n"
+    
+    message += "\n## 使い方\n"
+    message += "1. ファイルをドラッグ&ドロップまたはクリップボードアイコンからアップロード\n"
+    message += "2. ファイルは自動的に処理され、ナレッジベースに追加されます\n"
+    message += "3. AIはアップロードされたファイルの内容を参照して回答します\n\n"
+    
+    message += "💡 **サポートされるファイル形式**: "
+    message += "TXT, MD, PDF, DOC, DOCX, CSV, JSON, XML, HTML, Python, JavaScriptなど"
+    
+    await cl.Message(content=message, author="System").send()
+
+
+async def clear_knowledge_base():
+    """ナレッジベースをクリア"""
+    # 確認メッセージ
+    res = await cl.AskActionMessage(
+        content="⚠️ ナレッジベースのすべてのファイルを削除します。よろしいですか？",
+        actions=[
+            cl.Action(name="confirm", value="yes", label="はい、削除します"),
+            cl.Action(name="cancel", value="no", label="キャンセル")
+        ]
+    ).send()
+    
+    if res and res.get("value") == "yes":
+        try:
+            # ベクトルストアを削除
+            vector_stores = cl.user_session.get("vector_stores", {})
+            
+            for store_type, store_id in vector_stores.items():
+                if store_type == "personal":
+                    success = await vector_store_handler.delete_vector_store(store_id)
+                    if success:
+                        app_logger.info(f"ベクトルストア削除: {store_id}")
+            
+            # セッション情報をクリア
+            cl.user_session.set("vector_stores", {})
+            cl.user_session.set("uploaded_files", [])
+            
+            await cl.Message(
+                content="✅ ナレッジベースをクリアしました",
+                author="System"
+            ).send()
+            
+        except Exception as e:
+            app_logger.error(f"ナレッジベースクリアエラー: {e}")
+            await cl.Message(
+                content=f"❌ クリアエラー: {e}",
+                author="System"
+            ).send()
+    else:
+        await cl.Message(
+            content="キャンセルされました",
+            author="System"
+        ).send()
+
+
+async def show_settings():
+    """設定画面を表示（トグル式）"""
+    settings = config_manager.get_all_settings()
+    
+    # 現在の設定状態を取得
+    proxy_enabled = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+    http_proxy = os.getenv("HTTP_PROXY", "")
+    https_proxy = os.getenv("HTTPS_PROXY", "")
+    
+    # Toolsの状態を取得
+    tools_status = tools_config.get_tools_status()
+    
+    # メッセージを構築
+    message = "# ⚙️ 設定\n\n"
+    
+    # プロキシ設定
+    message += "## 🌐 プロキシ設定\n"
+    message += f"**状態**: {'\u2705 有効' if proxy_enabled else '\u274c 無効'}\n"
+    if proxy_enabled:
+        message += f"**HTTP Proxy**: {http_proxy or '未設定'}\n"
+        message += f"**HTTPS Proxy**: {https_proxy or '未設定'}\n"
+    message += "\n"
+    
+    # Tools設定
+    message += "## 🔧 Tools機能\n"
+    message += f"**全体**: {'\u2705 有効' if tools_config.is_enabled() else '\u274c 無効'}\n"
+    if tools_config.is_enabled():
+        for tool_name, enabled in tools_status.items():
+            status_icon = '\u2705' if enabled else '\u274c'
+            message += f"- **{tool_name}**: {status_icon}\n"
+    message += "\n"
+    
+    # アクションボタン
+    actions = [
+        cl.Action(name="toggle_proxy", value="proxy", label="🌐 プロキシトグル"),
+        cl.Action(name="set_proxy_url", value="proxy_url", label="🔗 プロキシURL設定"),
+        cl.Action(name="toggle_tools", value="tools", label="🔧 Tools全体トグル"),
+        cl.Action(name="toggle_web_search", value="web_search", label="🔍 Web検索トグル"),
+        cl.Action(name="toggle_file_search", value="file_search", label="📄 ファイル検索トグル"),
+    ]
+    
+    res = await cl.AskActionMessage(
+        content=message + "\n下のボタンから設定を変更できます:",
+        actions=actions
+    ).send()
+    
+    if res:
+        await handle_settings_action(res)
+
+
+async def handle_settings_action(action_response):
+    """設定アクションを処理"""
+    action = action_response.get("value")
+    
+    if action == "proxy":
+        # プロキシの有効/無効をトグル
+        current = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+        new_value = "false" if current else "true"
+        
+        # .envファイルを更新
+        config_manager.update_env_value("PROXY_ENABLED", new_value)
+        os.environ["PROXY_ENABLED"] = new_value
+        
+        # クライアントを再初期化
+        vector_store_handler._init_clients()
+        responses_handler._init_clients()
+        
+        status = "有効" if new_value == "true" else "無効"
+        await cl.Message(
+            content=f"✅ プロキシを{status}にしました",
+            author="System"
+        ).send()
+        
+    elif action == "proxy_url":
+        # プロキシURLを設定
+        res = await cl.AskUserMessage(
+            content="HTTPプロキシURLを入力してください (例: http://proxy.example.com:8080):",
+            timeout=60
+        ).send()
+        
+        if res:
+            http_proxy = res["output"].strip()
+            
+            # HTTPSプロキシも設定
+            res2 = await cl.AskUserMessage(
+                content="HTTPSプロキシURLを入力してください (同じ場合はEnter, 例: http://proxy.example.com:8080):",
+                timeout=60
+            ).send()
+            
+            https_proxy = res2["output"].strip() if res2 else http_proxy
+            
+            # .envファイルを更新
+            config_manager.update_env_value("HTTP_PROXY", http_proxy)
+            config_manager.update_env_value("HTTPS_PROXY", https_proxy)
+            os.environ["HTTP_PROXY"] = http_proxy
+            os.environ["HTTPS_PROXY"] = https_proxy
+            
+            # クライアントを再初期化
+            vector_store_handler._init_clients()
+            responses_handler._init_clients()
+            
+            await cl.Message(
+                content=f"✅ プロキシURLを設定しました\nHTTP: {http_proxy}\nHTTPS: {https_proxy}",
+                author="System"
+            ).send()
+    
+    elif action == "tools":
+        # Tools全体をトグル
+        if tools_config.is_enabled():
+            tools_config.disable_all_tools()
+            await cl.Message(content="❌ Tools機能を無効にしました", author="System").send()
+        else:
+            tools_config.enable_all_tools()
+            await cl.Message(content="✅ Tools機能を有効にしました", author="System").send()
+    
+    elif action == "web_search":
+        # Web検索をトグル
+        if tools_config.is_tool_enabled("web_search_preview"):
+            tools_config.disable_tool("web_search_preview")
+            await cl.Message(content="❌ Web検索を無効にしました", author="System").send()
+        else:
+            tools_config.enable_tool("web_search_preview")
+            await cl.Message(content="✅ Web検索を有効にしました", author="System").send()
+    
+    elif action == "file_search":
+        # ファイル検索をトグル
+        if tools_config.is_tool_enabled("file_search"):
+            tools_config.disable_tool("file_search")
+            await cl.Message(content="❌ ファイル検索を無効にしました", author="System").send()
+        else:
+            tools_config.enable_tool("file_search")
+            await cl.Message(content="✅ ファイル検索を有効にしました", author="System").send()
+    
+    # 設定画面を再表示
+    await show_settings()
 
 
 async def show_status():

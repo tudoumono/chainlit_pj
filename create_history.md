@@ -98,7 +98,98 @@
 - `openai responseAPI reference (Streaming API responses).md`
 - `openai responseAPI reference (Conversation state).md`
 
+## 2025-08-18
+
+### ファイルアップロードエラー修正と設定機能改善
+
+#### 問題1: ファイルアップロードエラー
+- **エラー内容**: `'File' object has no attribute 'get'`
+- **原因**: data_layer.pyのcreate_element関数がFileオブジェクトを辞書として扱おうとしていた
+- **修正**: Fileオブジェクトを辞書に変換する処理を追加
+
+#### 問題2: プロキシ設定の改善
+- **修正内容**:
+  - PROXY_ENABLED環境変数で有効/無効を制御
+  - vector_store_handler.pyにプロキシ設定を追加
+  - トグル式UIで簡単に切り替え可能
+  - .envファイルで永続管理
+
+#### 機能追加1: ツールのトグルUI
+- **追加機能**:
+  - /settingsコマンドで設定画面を表示
+  - Tools全体の有効/無効をワンクリックで切り替え
+  - Web検索、ファイル検索を個別にトグル
+
+#### 機能追加2: プロキシ設定の改善
+- **追加機能**:
+  - プロキシの有効/無効をトグル
+  - プロキシURLをインタラクティブに入力
+  - HTTP/HTTPSプロキシを個別に設定
+  - .envファイルに永続保存
+
+#### 修正ファイル
+1. `data_layer.py` - create_element関数を修正
+2. `utils/vector_store_handler.py` - プロキシ設定を追加
+3. `utils/config.py` - update_env_value関数を追加
+4. `utils/tools_config.py` - get_tools_status関数を追加
+5. `app.py` - show_settings、handle_settings_action関数を追加
+
 ## 2025-08-17
+
+### Phase 7 ベクトルストア基礎の実装
+
+#### 実装内容
+- **ベクトルストア管理**: OpenAI Embeddingsを使った個人ナレッジベース
+- **ファイルアップロード**: ファイルをベクトルストアに自動追加
+- **ベクトルストア操作**: 作成、一覧、詳細、ファイル管理、削除
+- **file_searchツール**: アップロードしたファイルを基にAIが回答
+
+#### 新規ファイル
+1. `utils/vector_store_handler.py` - ベクトルストア管理モジュール
+
+#### 修正ファイル
+1. `app.py` - Phase 7機能の統合
+   - ファイルアップロード処理追加
+   - ベクトルストア関連コマンドの実装
+   - handle_file_upload関数追加
+
+#### 追加コマンド
+- `/vs` または `/vector` - ベクトルストア一覧
+- `/vs create [名前]` - 新規作成
+- `/vs list` - 一覧表示
+- `/vs info [ID]` - 詳細情報
+- `/vs files [ID]` - ファイル一覧
+- `/vs use [ID]` - 使用設定
+- `/vs delete [ID]` - 削除
+
+## 2025-08-17
+
+### Phase 7 ベクトルストア基礎の実装
+
+#### 実装内容
+- **ファイルアップロード機能**: ドラッグ&ドロップまたはクリップボードアイコンから
+- **ベクトルストア管理**: OpenAI Embeddings APIを使用
+- **ナレッジベース**: 個人用ベクトルストアの作成と管理
+- **file_searchツール**: アップロードしたファイルの内容をAIが参照
+
+#### 新規ファイル
+1. `utils/vector_store_handler.py` - ベクトルストア管理モジュール
+2. `Phase7_test_files/project_spec.md` - テスト用サンプルファイル
+
+#### 修正ファイル
+1. `app.py` - Phase 7機能の統合
+   - on_chat_startにベクトルストア初期化追加
+   - on_messageにファイルアップロード処理追加
+   - add_files_to_knowledge_base、show_knowledge_base、clear_knowledge_base関数追加
+
+#### 追加コマンド
+- `/kb` - ナレッジベースの状態表示
+- `/kb clear` - ナレッジベースをクリア
+
+#### サポートされるファイル形式
+- テキスト: TXT, MD, CSV, JSON, XML, YAML
+- ドキュメント: PDF, DOC, DOCX, HTML
+- コード: Python, JavaScript, Java, C++, Goなど
 
 ### Phase 6 高度な設定機能の実装
 
