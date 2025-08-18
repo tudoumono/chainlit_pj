@@ -44,6 +44,7 @@ class ConfigManager:
             "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
             "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
             "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
+            "PROXY_ENABLED": os.getenv("PROXY_ENABLED", "false").lower() == "true",
             "COMPANY_VECTOR_STORE_ID": os.getenv("COMPANY_VECTOR_STORE_ID", ""),
             "PERSONAL_VECTOR_STORE_ID": os.getenv("PERSONAL_VECTOR_STORE_ID", ""),
             "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gpt-4o-mini"),
@@ -137,16 +138,51 @@ class ConfigManager:
         return {
             "HTTP_PROXY": os.getenv("HTTP_PROXY", ""),
             "HTTPS_PROXY": os.getenv("HTTPS_PROXY", ""),
+            "PROXY_ENABLED": os.getenv("PROXY_ENABLED", "false").lower() == "true",
         }
     
-    def set_proxy_settings(self, http_proxy: str = "", https_proxy: str = "") -> bool:
+    def set_proxy_settings(self, http_proxy: str = "", https_proxy: str = "", proxy_enabled: bool = False) -> bool:
         """プロキシ設定を保存"""
-        config = {}
-        if http_proxy:
-            config["HTTP_PROXY"] = http_proxy
-        if https_proxy:
-            config["HTTPS_PROXY"] = https_proxy
+        config = {
+            "HTTP_PROXY": http_proxy,
+            "HTTPS_PROXY": https_proxy,
+            "PROXY_ENABLED": "true" if proxy_enabled else "false"
+        }
         return self.save_config(config)
+    
+    def get_available_models(self) -> List[str]:
+        """利用可能なモデルリストを動的に取得"""
+        default_models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+        
+        api_key = self.get_api_key()
+        if not api_key:
+            return default_models
+        
+        try:
+            # プロキシ設定を適用
+            if os.getenv("PROXY_ENABLED", "false").lower() == "true":
+                proxy = os.getenv("HTTPS_PROXY", "")
+                if proxy:
+                    os.environ["HTTPS_PROXY"] = proxy
+                    os.environ["HTTP_PROXY"] = proxy
+            
+            client = OpenAI(api_key=api_key)
+            models = client.models.list()
+            
+            # チャット補完に使用可能なモデルをフィルタリング
+            chat_models = []
+            for model in models:
+                model_id = model.id
+                # GPTモデル、o1モデル、その他のチャット可能モデルを含める
+                if any(prefix in model_id for prefix in ["gpt-", "o1-", "claude-", "gemini-"]):
+                    chat_models.append(model_id)
+            
+            # モデル名でソート（新しいモデルが上に来るように）
+            return sorted(chat_models, reverse=True) if chat_models else default_models
+        
+        except Exception as e:
+            print(f"Error fetching models: {e}")
+            return default_models
     
     def get_vector_store_ids(self) -> Dict[str, str]:
         """ベクトルストアIDを取得"""

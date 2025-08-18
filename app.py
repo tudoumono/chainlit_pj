@@ -287,18 +287,35 @@ async def on_chat_start():
     cl.user_session.set("vector_stores", {})
     cl.user_session.set("uploaded_files", [])
     
+    # モデルリストを動的に取得
+    available_models = config_manager.get_available_models()
+    
+    # プロキシ設定を取得
+    proxy_settings = config_manager.get_proxy_settings()
+    
     # 設定ウィジェットを送信
     await cl.ChatSettings(
         [
             Select(
                 id="Model",
                 label="OpenAI - Model",
-                values=["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-                initial_index=1,  # デフォルトはgpt-4o-mini
+                values=available_models,
+                initial_index=available_models.index(settings.get("DEFAULT_MODEL", "gpt-4o-mini")) if settings.get("DEFAULT_MODEL", "gpt-4o-mini") in available_models else 0,
             ),
             Switch(id="Tools_Enabled", label="Tools機能 - 有効/無効", initial=tools_config.is_enabled()),
             Switch(id="Web_Search", label="Web検索 - 有効/無効", initial=tools_config.is_tool_enabled("web_search")),
             Switch(id="File_Search", label="ファイル検索 - 有効/無効", initial=tools_config.is_tool_enabled("file_search")),
+            Switch(
+                id="Proxy_Enabled",
+                label="プロキシ - 有効/無効",
+                initial=proxy_settings.get("PROXY_ENABLED", False)
+            ),
+            TextInput(
+                id="Proxy_URL",
+                label="プロキシURL",
+                initial=proxy_settings.get("HTTPS_PROXY", ""),
+                placeholder="http://user:pass@host:port",
+            ),
             Slider(
                 id="Temperature",
                 label="OpenAI - Temperature",
@@ -445,6 +462,34 @@ async def on_settings_update(settings):
         else:
             tools_config.update_tool_status("file_search", False)
             await cl.Message(content="❌ ファイル検索を無効にしました", author="System").send()
+    
+    # プロキシ設定の更新
+    if "Proxy_Enabled" in settings or "Proxy_URL" in settings:
+        proxy_enabled = settings.get("Proxy_Enabled", False)
+        proxy_url = settings.get("Proxy_URL", "")
+        
+        # プロキシ設定を保存
+        config_manager.set_proxy_settings(
+            http_proxy=proxy_url,
+            https_proxy=proxy_url,
+            proxy_enabled=proxy_enabled
+        )
+        
+        # 環境変数を更新
+        if proxy_enabled and proxy_url:
+            os.environ["HTTPS_PROXY"] = proxy_url
+            os.environ["HTTP_PROXY"] = proxy_url
+            await cl.Message(
+                content=f"✅ プロキシを有効にしました: {proxy_url}",
+                author="System"
+            ).send()
+        else:
+            os.environ.pop("HTTPS_PROXY", None)
+            os.environ.pop("HTTP_PROXY", None)
+            await cl.Message(
+                content="❌ プロキシを無効にしました",
+                author="System"
+            ).send()
     
     # Temperatureの更新
     if "Temperature" in settings:
