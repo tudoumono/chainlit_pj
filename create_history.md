@@ -134,6 +134,55 @@
 4. `utils/tools_config.py` - get_tools_status関数を追加
 5. `app.py` - show_settings、handle_settings_action関数を追加
 
+## 2025-08-18 (2回目の修正)
+
+### ツール設定表示とトグル機能の改善
+
+#### 修正1: ツール設定の表記改善
+- **問題**: 個別ツールの状態表示で有効化キーワードが不明
+- **修正内容**: 
+  - `show_tools_status()`関数で各ツールの有効/無効の後にキーワードを括弧で追加
+  - 例: `❌ 無効` → `❌ 無効 (web_search)`
+
+#### 修正2: Chainlitトグル設定の実装
+- **問題**: トグル設定が実装されていなかった
+- **修正内容**:
+  - ChainlitのChatSettingsを使用したトグル式UIを実装
+  - `@cl.on_settings_update`ハンドラーを追加
+  - モデル選択、Tools機能、Temperature、システムプロンプトのリアルタイム設定変更が可能に
+
+#### 新機能
+- **リアルタイム設定変更**: チャット中に設定を動的に変更可能
+- **トグルUI**: Switchウィジェットで機能の有効/無効を簡単に切り替え
+- **設定ウィジェット**: Select、Switch、Slider、TextInputを使用した直感的なUI
+
+#### 修正ファイル
+1. `app.py` - 以下の修正を実施
+   - ChatSettingsのimportを追加
+   - `on_chat_start`関数内でChatSettingsウィジェットを送信
+   - `@cl.on_settings_update`ハンドラーを追加
+   - `show_tools_status()`関数でキーワードを括弧内に表示
+
+## 2025-08-18 (3回目の修正)
+
+### 設定更新エラーの修正
+
+#### 問題: AttributeError: 'ToolsConfig' object has no attribute 'save_config'
+- **原因**: `save_config()`メソッドが存在しない
+- **修正内容**:
+  1. `app.py`から`tools_config.save_config()`の呼び出しを削除
+  2. `utils/tools_config.py`にヘルパーメソッドを追加:
+     - `update_enabled()` - Tools機能全体の有効/無効を更新
+     - `enable_all_tools()` - すべてのツールを有効化
+     - `disable_all_tools()` - すべてのツールを無効化
+     - `enable_tool()` - 特定のツールを有効化
+     - `disable_tool()` - 特定のツールを無効化
+  3. `app.py`の`on_settings_update`関数で`update_enabled()`メソッドを使用
+
+#### 修正ファイル
+1. `app.py` - save_config()呼び出しを削除
+2. `utils/tools_config.py` - ヘルパーメソッドを追加
+
 ## 2025-08-17
 
 ### Phase 7 ベクトルストア基礎の実装

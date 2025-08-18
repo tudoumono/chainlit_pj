@@ -25,6 +25,7 @@ Chat Completions APIに自動的にフォールバックしますが、
 
 import chainlit as cl
 from chainlit.types import ThreadDict
+from chainlit.input_widget import Select, Switch, Slider, TextInput
 from dotenv import load_dotenv
 import os
 import auth  # 認証設定をインポート
@@ -285,6 +286,35 @@ async def on_chat_start():
     cl.user_session.set("vector_stores", {})
     cl.user_session.set("uploaded_files", [])
     
+    # 設定ウィジェットを送信
+    await cl.ChatSettings(
+        [
+            Select(
+                id="Model",
+                label="OpenAI - Model",
+                values=["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+                initial_index=1,  # デフォルトはgpt-4o-mini
+            ),
+            Switch(id="Tools_Enabled", label="Tools機能 - 有効/無効", initial=tools_config.is_enabled()),
+            Switch(id="Web_Search", label="Web検索 - 有効/無効", initial=tools_config.is_tool_enabled("web_search")),
+            Switch(id="File_Search", label="ファイル検索 - 有効/無効", initial=tools_config.is_tool_enabled("file_search")),
+            Slider(
+                id="Temperature",
+                label="OpenAI - Temperature",
+                initial=0.7,
+                min=0,
+                max=2,
+                step=0.1,
+            ),
+            TextInput(
+                id="System_Prompt",
+                label="システムプロンプト",
+                initial="",
+                placeholder="AIの振る舞いを定義するプロンプトを入力...",
+            ),
+        ]
+    ).send()
+    
     # ユーザーIDを取得して個人用ベクトルストアを確認
     current_user = cl.user_session.get("user")
     if current_user:
@@ -367,6 +397,81 @@ async def on_chat_start():
             content="⚠️ **APIキーが設定されていません**\n\n`/setkey [あなたのAPIキー]` コマンドで設定してください。",
             author="System"
         ).send()
+
+
+@cl.on_settings_update
+async def on_settings_update(settings):
+    """
+    設定が更新された時の処理
+    """
+    app_logger.info(f"🌀 設定更新", settings=settings)
+    
+    # モデルの更新
+    if "Model" in settings:
+        model = settings["Model"]
+        current_settings = cl.user_session.get("settings", {})
+        current_settings["DEFAULT_MODEL"] = model
+        cl.user_session.set("settings", current_settings)
+        responses_handler.update_model(model)
+        await cl.Message(
+            content=f"✅ モデルを {model} に変更しました",
+            author="System"
+        ).send()
+    
+    # Tools機能全体の更新
+    if "Tools_Enabled" in settings:
+        if settings["Tools_Enabled"]:
+            tools_config.update_enabled(True)
+            await cl.Message(content="✅ Tools機能を有効にしました", author="System").send()
+        else:
+            tools_config.update_enabled(False)
+            await cl.Message(content="❌ Tools機能を無効にしました", author="System").send()
+    
+    # Web検索の更新
+    if "Web_Search" in settings:
+        if settings["Web_Search"]:
+            tools_config.update_tool_status("web_search", True)
+            await cl.Message(content="✅ Web検索を有効にしました", author="System").send()
+        else:
+            tools_config.update_tool_status("web_search", False)
+            await cl.Message(content="❌ Web検索を無効にしました", author="System").send()
+    
+    # ファイル検索の更新
+    if "File_Search" in settings:
+        if settings["File_Search"]:
+            tools_config.update_tool_status("file_search", True)
+            await cl.Message(content="✅ ファイル検索を有効にしました", author="System").send()
+        else:
+            tools_config.update_tool_status("file_search", False)
+            await cl.Message(content="❌ ファイル検索を無効にしました", author="System").send()
+    
+    # Temperatureの更新
+    if "Temperature" in settings:
+        temperature = settings["Temperature"]
+        # アクティブなペルソナがある場合はその設定も更新
+        active_persona = cl.user_session.get("active_persona")
+        if active_persona:
+            active_persona["temperature"] = temperature
+            cl.user_session.set("active_persona", active_persona)
+        await cl.Message(
+            content=f"🌡️ Temperatureを {temperature} に変更しました",
+            author="System"
+        ).send()
+    
+    # システムプロンプトの更新
+    if "System_Prompt" in settings:
+        system_prompt = settings["System_Prompt"]
+        cl.user_session.set("system_prompt", system_prompt)
+        if system_prompt:
+            await cl.Message(
+                content=f"✅ システムプロンプトを設定しました:\n```\n{system_prompt[:200]}...\n```",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content="✅ システムプロンプトをクリアしました",
+                author="System"
+            ).send()
 
 
 @cl.on_message
@@ -942,10 +1047,10 @@ async def show_tools_status():
 - **Tools機能**: {status}
 
 ## 個別ツールの状態
-- **Web検索**: {"✅ 有効" if tools_config.is_tool_enabled("web_search") else "❌ 無効"}
-- **ファイル検索**: {"✅ 有効" if tools_config.is_tool_enabled("file_search") else "❌ 無効"}
-- **コードインタープリター**: {"✅ 有効" if tools_config.is_tool_enabled("code_interpreter") else "❌ 無効"}
-- **カスタム関数**: {"✅ 有効" if tools_config.is_tool_enabled("custom_functions") else "❌ 無効"}
+- **Web検索**: {"✅ 有効 (web_search)" if tools_config.is_tool_enabled("web_search") else "❌ 無効 (web_search)"}
+- **ファイル検索**: {"✅ 有効 (file_search)" if tools_config.is_tool_enabled("file_search") else "❌ 無効 (file_search)"}
+- **コードインタープリター**: {"✅ 有効 (code_interpreter)" if tools_config.is_tool_enabled("code_interpreter") else "❌ 無効 (code_interpreter)"}
+- **カスタム関数**: {"✅ 有効 (custom_functions)" if tools_config.is_tool_enabled("custom_functions") else "❌ 無効 (custom_functions)"}
 
 ## 設定
 - **ツール選択**: {tools_config.get_setting("tool_choice", "auto")}

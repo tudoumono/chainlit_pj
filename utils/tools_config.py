@@ -178,6 +178,41 @@ class ToolsConfig:
         """ファイル検索の対象ファイルIDリストを取得"""
         return self.config.get("tools", {}).get("file_search", {}).get("file_ids", [])
     
+    def update_enabled(self, enabled: bool) -> None:
+        """
+        Tools機能全体の有効/無効を更新
+        
+        Args:
+            enabled: 有効にする場合はTrue
+        """
+        self.config["enabled"] = enabled
+        self._save_config()
+    
+    def enable_all_tools(self) -> None:
+        """すべてのツールを有効化"""
+        self.config["enabled"] = True
+        for tool_name in self.config.get("tools", {}):
+            self.config["tools"][tool_name]["enabled"] = True
+        self._save_config()
+    
+    def disable_all_tools(self) -> None:
+        """すべてのツールを無効化"""
+        self.config["enabled"] = False
+        self._save_config()
+    
+    def enable_tool(self, tool_name: str) -> None:
+        """特定のツールを有効化"""
+        if tool_name in self.config.get("tools", {}):
+            self.config["enabled"] = True  # Tools機能全体も有効に
+            self.config["tools"][tool_name]["enabled"] = True
+            self._save_config()
+    
+    def disable_tool(self, tool_name: str) -> None:
+        """特定のツールを無効化"""
+        if tool_name in self.config.get("tools", {}):
+            self.config["tools"][tool_name]["enabled"] = False
+            self._save_config()
+    
     def reset_to_default(self) -> None:
         """設定をデフォルトにリセット"""
         self.config = self._load_config()

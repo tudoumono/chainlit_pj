@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "tools": {
     "web_search": {
       "enabled": true,
@@ -8,7 +8,7 @@
       "auto_invoke": true
     },
     "file_search": {
-      "enabled": true,
+      "enabled": false,
       "name": "file_search",
       "description": "Search through uploaded files and documents",
       "auto_invoke": true,
