@@ -551,3 +551,61 @@
 - **修正内容**:
   - `app.py`のファイルアップロード処理部分で`cl.Action`にpayloadパラメータを追加
   - レスポンス取得時も`res.get("payload", {}).get("action")`に変更
+
+### vector_store_ids空配列エラー修正
+- **問題**: file_searchツールでvector_store_idsが空配列の場合エラー
+- **エラー**: `Invalid 'tools[1].vector_store_ids': empty array`
+- **修正内容**:
+  - `utils/tools_config.py`の`build_tools_parameter`関数を修正
+  - vector_store_idsが空の場合はfile_searchツールを追加しないように変更
+  - ベクトルストア未設定時の警告メッセージを追加
+
+### エラーメッセージの改善
+- **問題**: エラーメッセージが重複表示される
+- **修正内容**:
+  - `app.py`のエラー処理部分を修正
+  - 重複したエラーメッセージを削除
+  - ベクトルストア関連エラー時の解決方法を明示
+
+## 2025-08-19 (ベクトルストア実装の改善)
+
+### Responses API特化実装（オプション3）
+- **目的**: ローカルJSON管理からOpenAI API v2の正式なベクトルストア機能へ移行
+- **修正ファイル**:
+  - `utils/vector_store_handler.py`
+  - `utils/tools_config.py`
+
+### 主な変更内容
+
+#### 1. create_vector_store関数
+- OpenAI API v2のbeta.vector_stores.createを使用
+- ベクトルストアのステータス確認処理を追加
+- ローカルJSON管理のフォールバックを削除
+
+#### 2. add_file_to_vector_store関数  
+- file_batches APIを使用したバッチ処理に変更
+- ファイルのベクトル化完了を待つ処理を追加
+- ステータス確認とエラーハンドリングを強化
+
+#### 3. list_vector_stores関数
+- OpenAI API v2で実際のベクトルストア情報を取得
+- 詳細情報（file_counts、usage_bytes等）を含むように改善
+
+#### 4. tools_config.pyの改善
+- ローカルファイルの存在確認処理を削除
+- 設定されたvector_store_idsをそのまま使用
+
+### アプローチの変更
+- **以前**: ローカルJSONファイルでベクトルストア情報を管理
+- **現在**: OpenAI API v2の正式なベクトルストア機能を使用
+
+### メリット
+- 実際のOpenAIベクトルストア機能を使用
+- ファイル検索が正しく動作
+- Responses APIでfile_searchツールが使用可能
+
+## 2025年8月19日
+- utilsフォルダの不要ファイル整理実施
+- response_handler.pyとresponse_handler_corrected.pyを.backupファイルに移動（重複のため）
+- responses_handler.pyのみが実際に使用されているため他は不要と判定
+- utils/__init__.pyのインポートエラー修正（response_handler → responses_handler）

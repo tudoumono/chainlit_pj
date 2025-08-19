@@ -145,7 +145,7 @@ class VectorStoreHandler:
     
     async def create_vector_store(self, name: str, file_ids: List[str] = None) -> Optional[str]:
         """
-        ベクトルストアを作成
+        ベクトルストアを作成（OpenAI API v2を使用）
         
         Args:
             name: ベクトルストア名
@@ -159,13 +159,10 @@ class VectorStoreHandler:
                 print("⚠️ OpenAIクライアントが初期化されていません")
                 return None
             
-            # ベクトルストアを作成
             print(f"📝 ベクトルストア作成開始: {name}")
             
-            # 非同期クライアントでベクトルストアを作成
-            # 注意: OpenAI SDKの最新版では、beta.vector_storesが利用可能
             try:
-                # file_idsがある場合はそれを含めて作成
+                # OpenAI API v2のベクトルストアを作成
                 if file_ids:
                     vector_store = await self.async_client.beta.vector_stores.create(
                         name=name,
@@ -177,34 +174,32 @@ class VectorStoreHandler:
                     )
                 
                 print(f"✅ ベクトルストア作成成功: {vector_store.id}")
+                print(f"   名前: {vector_store.name}")
+                print(f"   ステータス: {vector_store.status}")
+                print(f"   ファイル数: {vector_store.file_counts.total if hasattr(vector_store, 'file_counts') else 0}")
+                
+                # 作成完了を待つ（最大30秒）
+                max_wait = 30
+                waited = 0
+                while waited < max_wait:
+                    vs = await self.async_client.beta.vector_stores.retrieve(vector_store.id)
+                    if vs.status == "completed":
+                        print(f"✅ ベクトルストアの準備が完了しました: {vs.id}")
+                        break
+                    elif vs.status == "failed":
+                        print(f"❌ ベクトルストアの作成に失敗しました: {vs.id}")
+                        return None
+                    print(f"⏳ ベクトルストアを準備中... ({vs.status})")
+                    await asyncio.sleep(2)
+                    waited += 2
+                
                 return vector_store.id
                 
             except AttributeError as ae:
-                # SDKのバージョンが古い、またはAPIが利用できない場合
-                print(f"⚠️ ベクトルストアAPIが利用できません: {ae}")
+                # SDKのバージョンが古い場合のエラー
+                print(f"⚠️ ベクトルストアAPIエラー: {ae}")
                 print("   OpenAI SDKを最新版に更新してください: pip install --upgrade openai")
-                
-                # フォールバック: ローカル管理（簡易版）
-                import uuid
-                import json
-                import os
-                
-                vs_id = f"vs_{uuid.uuid4().hex[:12]}"
-                vs_data = {
-                    "id": vs_id,
-                    "name": name,
-                    "file_ids": file_ids or [],
-                    "created_at": datetime.now().isoformat()
-                }
-                
-                vs_dir = ".chainlit/vector_stores"
-                os.makedirs(vs_dir, exist_ok=True)
-                
-                with open(f"{vs_dir}/{vs_id}.json", "w") as f:
-                    json.dump(vs_data, f)
-                
-                print(f"✅ ベクトルストア作成（ローカル管理）: {vs_id}")
-                return vs_id
+                return None
                 
         except Exception as e:
             print(f"❌ ベクトルストア作成エラー: {e}")
@@ -320,7 +315,7 @@ class VectorStoreHandler:
     
     async def add_file_to_vector_store(self, vector_store_id: str, file_id: str) -> bool:
         """
-        ベクトルストアにファイルを追加
+        ベクトルストアにファイルを追加（OpenAI API v2を使用）
         
         Args:
             vector_store_id: ベクトルストアID
@@ -335,38 +330,41 @@ class VectorStoreHandler:
                 return False
             
             try:
-                # ファイルをベクトルストアに追加
-                await self.async_client.beta.vector_stores.files.create(
+                # OpenAI API v2を使用してファイルをベクトルストアに追加
+                file_batch = await self.async_client.beta.vector_stores.file_batches.create(
                     vector_store_id=vector_store_id,
-                    file_id=file_id
+                    file_ids=[file_id]
                 )
                 
                 print(f"✅ ファイルをベクトルストアに追加: {file_id}")
+                print(f"   バッチID: {file_batch.id}")
+                print(f"   ステータス: {file_batch.status}")
+                
+                # ファイルの処理完了を待つ（最大30秒）
+                max_wait = 30
+                waited = 0
+                while waited < max_wait:
+                    batch = await self.async_client.beta.vector_stores.file_batches.retrieve(
+                        vector_store_id=vector_store_id,
+                        batch_id=file_batch.id
+                    )
+                    if batch.status == "completed":
+                        print(f"✅ ファイルのベクトル化が完了しました")
+                        return True
+                    elif batch.status == "failed":
+                        print(f"❌ ファイルのベクトル化に失敗しました")
+                        return False
+                    print(f"⏳ ファイルを処理中... ({batch.status})")
+                    await asyncio.sleep(2)
+                    waited += 2
+                
                 return True
                 
-            except AttributeError:
-                # APIが利用できない場合のフォールバック
-                import json
-                import os
-                
-                vs_dir = ".chainlit/vector_stores"
-                vs_file = f"{vs_dir}/{vector_store_id}.json"
-                
-                if os.path.exists(vs_file):
-                    with open(vs_file, "r") as f:
-                        vs_data = json.load(f)
-                    
-                    if file_id not in vs_data["file_ids"]:
-                        vs_data["file_ids"].append(file_id)
-                        
-                        with open(vs_file, "w") as f:
-                            json.dump(vs_data, f)
-                    
-                    print(f"✅ ファイルをベクトルストアに追加（ローカル）: {file_id}")
-                    return True
-                else:
-                    print(f"⚠️ ベクトルストアが見つかりません: {vector_store_id}")
-                    return False
+            except AttributeError as ae:
+                # SDKのバージョンが古い場合
+                print(f"⚠️ ベクトルストアAPIエラー: {ae}")
+                print("   OpenAI SDKを最新版に更新してください")
+                return False
             
         except Exception as e:
             print(f"❌ ファイル追加エラー: {e}")

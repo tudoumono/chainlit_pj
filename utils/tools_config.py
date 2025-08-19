@@ -270,30 +270,19 @@ class ToolsConfig:
         
         # ファイル検索ツール (file_searchタイプとして定義)
         if self.is_tool_enabled("file_search"):
-            # 設定からベクトルストアIDを取得し、存在確認を行う
+            # 設定からベクトルストアIDを取得
             vector_store_ids = self.get_vector_store_ids()
             
-            # 存在するIDのみフィルタリング（ローカルファイルの存在を確認）
-            valid_ids = []
-            for vs_id in vector_store_ids:
-                # ローカルファイルの存在確認
-                vs_file = f".chainlit/vector_stores/{vs_id}.json"
-                if os.path.exists(vs_file):
-                    valid_ids.append(vs_id)
-                else:
-                    print(f"⚠️ ベクトルストアID {vs_id} のローカルファイルが見つかりません。スキップします。")
-            
-            # 有効なIDが設定と異なる場合は更新
-            if set(valid_ids) != set(vector_store_ids):
-                self.config["tools"]["file_search"]["vector_store_ids"] = valid_ids
-                self._save_config()
-                print(f"✅ ベクトルストアIDリストを更新しました: {valid_ids}")
-            
-            file_search_config = {
-                "type": "file_search",
-                "vector_store_ids": valid_ids  # 検証済みのIDのみ使用
-            }
-            tools.append(file_search_config)
+            # vector_store_idsが空の場合はfile_searchツールを追加しない
+            # OpenAI APIは空のvector_store_idsを許可しないため
+            if vector_store_ids:
+                file_search_config = {
+                    "type": "file_search",
+                    "vector_store_ids": vector_store_ids  # 設定されたIDをそのまま使用
+                }
+                tools.append(file_search_config)
+            else:
+                print("⚠️ file_searchツールは有効ですが、ベクトルストアが設定されていないためスキップします")
         
         # コードインタープリター (code_interpreterタイプとして定義)
         if self.is_tool_enabled("code_interpreter"):

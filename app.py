@@ -774,7 +774,26 @@ async def on_message(message: cl.Message):
     ):
         if "error" in chunk:
             app_logger.error(f"API Error: {chunk['error']}")
-            ai_message.content = f"❌ エラー: {chunk['error']}"
+            # エラーメッセージをより分かりやすく
+            error_detail = chunk.get('error', {})
+            if isinstance(error_detail, dict):
+                error_msg = error_detail.get('message', str(error_detail))
+                error_type = error_detail.get('type', 'unknown_error')
+                
+                # ベクトルストア関連のエラーの場合
+                if 'vector_store_ids' in error_msg:
+                    ai_message.content = (
+                        "❌ ファイル検索エラー\n\n"
+                        "📁 ベクトルストアが設定されていません。\n\n"
+                        "以下のいずれかをお試しください：\n"
+                        "1. `/vs create [名前]` で新しいベクトルストアを作成\n"
+                        "2. 設定ウィジェットでベクトルストアIDを設定\n"
+                        "3. ファイル検索を一時的に無効化"
+                    )
+                else:
+                    ai_message.content = f"❌ APIエラー: {error_msg}\n\nエラータイプ: {error_type}"
+            else:
+                ai_message.content = f"❌ エラー: {chunk['error']}"
             await ai_message.update()
             response_text = None
             break
@@ -945,11 +964,12 @@ async def on_message(message: cl.Message):
                         estimated_tokens=estimated_tokens,
                         total_tokens=total_tokens)
     else:
-        error_msg = "❌ AI応答の生成に失敗しました。"
-        await cl.Message(content=error_msg, author="System").send()
+        # response_textがnullの場合は、すでにエラーメッセージが表示されているはず
         app_logger.error(f"AI応答生成失敗", user_input=user_input[:100])
-        ai_message.content = "❌ AI応答の生成に失敗しました。"
-        await ai_message.update()
+        # ai_messageにエラーが設定されていない場合のみ設定
+        if not ai_message.content or ai_message.content == "":
+            ai_message.content = "❌ AI応答の生成に失敗しました。"
+            await ai_message.update()
 
 
 async def handle_command(user_input: str):
