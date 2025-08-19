@@ -14,6 +14,8 @@ OpenAI APIを活用したプロフェッショナル向けのAIチャットア�
 - 🏷️ **タグ管理** - 整理された情報管理
 - 📊 **統計機能** - 使用状況の可視化
 - 🔄 **セッション管理** - 複数の会話を効率的に管理
+- 📁 **ベクトルストア管理** - ナレッジベースの構築と管理
+- 🎭 **ペルソナ機能** - カスタマイズ可能なAIアシスタント
 
 ## 📦 実装状況
 
@@ -103,16 +105,45 @@ chainlit run app.py
 
 ## 🛠️ 機能一覧
 
+### ベクトルストア管理
+
+#### 設定ウィジェット
+- **ベクトルストアID**: 使用するベクトルストアのIDをカンマ区切りで入力
+  - 例: `vs_xxxxx, vs_yyyyy`
+  - AIが指定されたベクトルストアの内容を参照して回答します
+
+#### ベクトルストアコマンド
+| コマンド | 説明 |
+|---------|------|
+| `/vs` または `/vector` | ベクトルストア一覧を表示 |
+| `/vs create [名前]` | 新しいベクトルストアを作成 |
+| `/vs list` | ベクトルストア一覧を表示 |
+| `/vs info [ID]` | 詳細情報を表示 |
+| `/vs files [ID]` | ファイル一覧を表示 |
+| `/vs use [ID]` | ベクトルストアを使用 |
+| `/vs rename [ID] [新しい名前]` | ベクトルストアの名前を変更 |
+| `/vs delete [ID]` | ベクトルストアを削除 |
+
+#### ファイルアップロード
+- ファイルをドラッグ&ドロップまたはクリップボタンから選択
+- アップロードされたファイルはOpenAIに保存されます
+- ベクトルストアに追加してAIが内容を参照できるようにするには、コマンドで操作してください
+
 ### コマンド
 
 | コマンド | 説明 |
 |---------|------|
 | `/help` | ヘルプ表示 |
-| `/status` | 現在の設定状態 |
-| `/model [name]` | モデル変更 |
-| `/system [prompt]` | システムプロンプト設定 |
-| `/clear` | 新しいセッション開始 |
 | `/stats` | 統計情報表示 |
+| `/status` | 現在の設定状態 |
+| `/setkey [APIキー]` | OpenAI APIキーを設定 |
+| `/test` | API接続をテスト |
+| `/tools` | Tools機能の状態表示 |
+| `/persona` | ペルソナ管理 |
+| `/persona create` | 新しいペルソナを作成 |
+| `/kb` | ナレッジベース状態表示 |
+
+💡 **ヒント**: モデル変更、システムプロンプト、Temperature調整などの設定は画面右上の設定パネルから行えます。
 
 ## 🔧 技術スタック
 
@@ -136,11 +167,16 @@ AI_Workspace_App_Chainlit/
 │   ├── response_handler.py # API通信
 │   ├── responses_handler.py # Responses API対応
 │   ├── tools_config.py    # Tools設定
+│   ├── persona_manager.py # ペルソナ管理
+│   ├── vector_store_handler.py # ベクトルストア管理
+│   ├── action_helper.py   # Actionヘルパー
 │   └── logger.py          # ログシステム
 ├── .chainlit/              # Chainlit設定
 │   ├── config.toml        # Chainlit設定
 │   ├── chainlit.db        # SQLiteデータベース
-│   └── tools_config.json  # Tools設定
+│   ├── tools_config.json  # Tools設定
+│   ├── personas.json      # ペルソナデータ
+│   └── vector_stores/     # ベクトルストア管理
 ├── .env                   # 環境変数
 └── requirements.txt       # 依存関係
 ```

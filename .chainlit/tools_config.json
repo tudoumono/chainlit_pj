@@ -12,7 +12,8 @@
       "name": "file_search",
       "description": "Search through uploaded files and documents",
       "auto_invoke": true,
-      "file_ids": []
+      "file_ids": [],
+      "vector_store_ids": []
     },
     "code_interpreter": {
       "enabled": false,

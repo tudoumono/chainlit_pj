@@ -372,6 +372,59 @@ class VectorStoreHandler:
             print(f"❌ ファイル追加エラー: {e}")
             return False
     
+    async def rename_vector_store(self, vector_store_id: str, new_name: str) -> bool:
+        """
+        ベクトルストアの名前を変更
+        
+        Args:
+            vector_store_id: ベクトルストアID
+            new_name: 新しい名前
+        
+        Returns:
+            成功/失敗
+        """
+        try:
+            if not self.async_client:
+                print("⚠️ OpenAIクライアントが初期化されていません")
+                return False
+            
+            try:
+                # ベクトルストアの名前を更新
+                await self.async_client.beta.vector_stores.update(
+                    vector_store_id=vector_store_id,
+                    name=new_name
+                )
+                
+                print(f"✅ ベクトルストア名を変更: {vector_store_id} -> {new_name}")
+                return True
+                
+            except AttributeError:
+                # APIが利用できない場合のフォールバック（ローカル管理）
+                import json
+                import os
+                
+                vs_dir = ".chainlit/vector_stores"
+                vs_file = f"{vs_dir}/{vector_store_id}.json"
+                
+                if os.path.exists(vs_file):
+                    with open(vs_file, "r") as f:
+                        vs_data = json.load(f)
+                    
+                    vs_data["name"] = new_name
+                    
+                    with open(vs_file, "w") as f:
+                        json.dump(vs_data, f)
+                    
+                    print(f"✅ ベクトルストア名を変更（ローカル）: {vector_store_id} -> {new_name}")
+                    return True
+                else:
+                    print(f"⚠️ ベクトルストアが見つかりません: {vector_store_id}")
+                    return False
+            
+        except Exception as e:
+            print(f"❌ ベクトルストア名変更エラー: {e}")
+            return False
+    
     async def delete_vector_store(self, vector_store_id: str) -> bool:
         """
         ベクトルストアを削除
@@ -433,13 +486,21 @@ class VectorStoreHandler:
                 
                 stores_list = []
                 for vs in vector_stores.data:
-                    stores_list.append({
-                        "id": vs.id,
-                        "name": vs.name,
-                        "file_counts": vs.file_counts,
-                        "created_at": vs.created_at,
-                        "status": vs.status
-                    })
+                    # 各ベクトルストアが実際に存在するか確認
+                    try:
+                        # ベクトルストアを取得して確認
+                        vs_detail = await self.async_client.beta.vector_stores.retrieve(vs.id)
+                        stores_list.append({
+                            "id": vs_detail.id,
+                            "name": vs_detail.name,
+                            "file_counts": vs_detail.file_counts,
+                            "created_at": vs_detail.created_at,
+                            "status": vs_detail.status
+                        })
+                    except Exception as e:
+                        # ベクトルストアが見つからない場合はスキップ
+                        print(f"⚠️ ベクトルストア {vs.id} の取得に失敗しました: {e}")
+                        continue
                 
                 return stores_list
                 
@@ -458,6 +519,7 @@ class VectorStoreHandler:
                             with open(vs_file, "r") as f:
                                 vs_data = json.load(f)
                             
+                            # ローカルファイルのみの管理の場合はそのまま追加
                             stores_list.append({
                                 "id": vs_data["id"],
                                 "name": vs_data["name"],
@@ -467,6 +529,12 @@ class VectorStoreHandler:
                             })
                         except Exception as e:
                             print(f"⚠️ ベクトルストアファイル読み込みエラー: {e}")
+                            # エラーが発生したファイルを削除
+                            try:
+                                os.remove(vs_file)
+                                print(f"🗑️ 破損したベクトルストアファイルを削除: {vs_file}")
+                            except:
+                                pass
                 
                 return stores_list
             
@@ -846,6 +914,92 @@ class VectorStoreHandler:
             except Exception as e:
                 print(f"⚠️ セッション用ベクトルストアのクリーンアップに失敗: {e}")
 
+    async def process_uploaded_file(self, element) -> Optional[str]:
+        """
+        Chainlitのファイルエレメントを処理してOpenAIにアップロード
+        
+        Args:
+            element: Chainlitのファイルエレメント
+        
+        Returns:
+            アップロードされたファイルID、失敗時はNone
+        """
+        try:
+            # ファイル名と拡張子を取得
+            filename = element.name
+            file_ext = Path(filename).suffix.lower()
+            
+            # サポートされているファイル形式かチェック
+            if file_ext not in self.SUPPORTED_FILE_TYPES:
+                print(f"⚠️ サポートされていないファイル形式: {file_ext}")
+                print(f"   サポートされる形式: {', '.join(self.SUPPORTED_FILE_TYPES.keys())}")
+                return None
+            
+            print(f"📤 ファイル処理開始: {filename}")
+            
+            # ファイルの内容を取得
+            # Chainlitのファイルエレメントはpathプロパティまたはcontentプロパティを持つ
+            file_bytes = None
+            
+            # pathがある場合（ローカルファイル）
+            if hasattr(element, 'path') and element.path:
+                print(f"   📁 ファイルパス: {element.path}")
+                async with aiofiles.open(element.path, 'rb') as f:
+                    file_bytes = await f.read()
+            
+            # contentがある場合（アップロードされたファイル）
+            elif hasattr(element, 'content'):
+                print(f"   📦 アップロードされたファイルを処理")
+                file_bytes = element.content
+                if isinstance(file_bytes, str):
+                    # Base64エンコードされている場合
+                    import base64
+                    file_bytes = base64.b64decode(file_bytes)
+            
+            # read メソッドがある場合
+            elif hasattr(element, 'read'):
+                print(f"   📖 ファイルを読み込み中")
+                file_bytes = await element.read()
+            
+            else:
+                print(f"❌ ファイルの内容を取得できませんでした")
+                print(f"   利用可能な属性: {dir(element)}")
+                return None
+            
+            if not file_bytes:
+                print(f"❌ ファイルの内容が空です")
+                return None
+            
+            # ファイルサイズチェック（最大512MB）
+            max_size = 512 * 1024 * 1024  # 512MB
+            file_size = len(file_bytes)
+            
+            if file_size > max_size:
+                print(f"❌ ファイルサイズが大きすぎます: {file_size / (1024 * 1024):.2f}MB (最大: 512MB)")
+                return None
+            
+            print(f"   📏 ファイルサイズ: {file_size:,} bytes ({file_size / 1024:.2f}KB)")
+            
+            # OpenAIにアップロード
+            file_id = await self.upload_file_from_bytes(
+                file_bytes=file_bytes,
+                filename=filename,
+                purpose="assistants"
+            )
+            
+            if file_id:
+                print(f"✅ ファイル処理完了: {filename} -> {file_id}")
+                return file_id
+            else:
+                print(f"❌ ファイルアップロード失敗: {filename}")
+                return None
+                
+        except Exception as e:
+            import traceback
+            print(f"❌ ファイル処理エラー: {e}")
+            print(f"   エラータイプ: {type(e).__name__}")
+            print(f"   スタックトレース:\n{traceback.format_exc()}")
+            return None
 
     async def process_uploaded_files(self, files: list) -> tuple[list[str], list[str]]:
         """

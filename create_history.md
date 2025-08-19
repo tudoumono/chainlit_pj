@@ -1,5 +1,21 @@
 # 修正履歴
 
+## 2025-08-19
+- ベクトルストア管理を簡素化
+  - ウィジェットはベクトルストアIDのカンマ区切り入力のみ
+  - 作成・名前変更・削除はコマンド操作で実行
+  - `/vs create [名前]` - 新規作成
+  - `/vs rename [ID] [新しい名前]` - 名前変更
+  - `/vs delete [ID]` - 削除
+- コマンドを大幅に整理
+  - `/tools enable/disable`コマンドを廃止
+  - `/model`、`/system`、`/clear`コマンドを廃止（ウィジェットに統合）
+  - 設定変更はウィジェットに統一
+  - `/tools`コマンドは状態表示のみ
+- ウィジェットの説明を改善
+  - ファイル検索にベクトルストアIDとの関連を追記
+  - TemperatureにAI応答の創造性制御の説明を追加
+
 ## 2025-01-27
 - Streamlit版アプリケーション（AI_Workspace_App）を廃止・削除
 - Chainlit版（AI_Workspace_App_Chainlit）に一本化
@@ -108,6 +124,11 @@
 - `openai responseAPI reference (Text generation).md`
 - `openai responseAPI reference (Streaming API responses).md`
 - `openai responseAPI reference (Conversation state).md`
+
+## 2025-08-19
+- 履歴復元時のウィジェット表示問題を修正
+  - `on_chat_resume`関数で設定ウィジェット(`ChatSettings`)を送信するように追加
+  - これにより履歴から会話を再開してもウィジェットが正しく表示される
 
 ## 2025-08-18
 
@@ -478,3 +499,55 @@
 - **出力元**: `data_layer.py`のSQLiteDataLayerクラス
 - **目的**: データベース操作の監視とデバッグ
 - **影響**: アプリケーション動作には影響なし（デバッグ情報のみ）
+
+## 2025-08-18
+
+### ベクトルストアID設定機能の追加
+- **追加機能**: ベクトルストアIDを設定ウィジェットで管理
+- **仕様**: カンマ区切りで複数のベクトルストアIDを指定可能
+- **修正ファイル**:
+  - `utils/tools_config.py` - ベクトルストアID管理メソッドを追加
+  - `app.py` - 設定ウィジェットにベクトルストアID入力フィールドを追加
+
+## 2025-08-19
+
+### ベクトルストア一覧取得エラーの修正
+- **問題**: `/vs`コマンドで表示したベクトルストアIDが実際には存在しない
+- **原因**: APIから取得したベクトルストアの存在確認が不十分
+- **修正内容**:
+  - `utils/vector_store_handler.py`の`list_vector_stores()`メソッドを修正
+  - 各ベクトルストアに対して`retrieve()`メソッドで存在確認
+  - 取得できないベクトルストアはスキップ
+
+### ベクトルストアID設定エラーの修正
+- **問題**: 存在しないベクトルストアIDがtools_config.jsonに設定されていた
+- **修正内容**:
+  - `.chainlit/tools_config.json`から不正なIDを削除
+  - ローカルの古いベクトルストアJSONファイルを削除
+  - ローカルファイル読み込みエラー時に自動削除処理を追加
+
+### Message.update()エラーの修正
+- **問題**: `Message.update()`メソッドがcontent引数を受け付けない
+- **修正内容**:
+  - `app.py`の複数箇所で`await ai_message.update(content=...)`を修正
+  - `ai_message.content = ...; await ai_message.update()`の形式に変更
+
+## 2025-08-19
+
+### ファイルアップロード処理の改善
+- **問題**: ファイルアップロードが完了していない状態でも次のメッセージを実施できる
+- **原因**: 
+  - `process_uploaded_file`関数が未定義
+  - ファイル処理中の待機処理が不十分
+- **修正内容**:
+  - `utils/vector_store_handler.py`に`process_uploaded_file`関数を追加
+  - ファイルアップロード中の進捗表示を改善
+  - ユーザーアクションの待機処理を追加（`cl.AskActionMessage`にtimeout設定）
+  - アップロード完了メッセージを明確化
+
+### cl.Action payloadエラー修正
+- **問題**: `cl.Action`にpayloadパラメータが必須になった
+- **エラー**: `Field required [type=missing, input_value=ArgsKwargs((), {'name': '...es', 'label': 'はい'}), input_type=ArgsKwargs]`
+- **修正内容**:
+  - `app.py`のファイルアップロード処理部分で`cl.Action`にpayloadパラメータを追加
+  - レスポンス取得時も`res.get("payload", {}).get("action")`に変更

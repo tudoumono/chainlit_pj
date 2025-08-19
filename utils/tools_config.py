@@ -41,7 +41,8 @@ class ToolsConfig:
                     "name": "file_search", 
                     "description": "Search through uploaded files and documents",
                     "auto_invoke": True,
-                    "file_ids": []  # 検索対象のファイルID
+                    "file_ids": [],  # 検索対象のファイルID
+                    "vector_store_ids": []  # 参照対象のベクトルストアID（カンマ区切りで複数指定可）
                 },
                 "code_interpreter": {
                     "enabled": False,
@@ -178,6 +179,28 @@ class ToolsConfig:
         """ファイル検索の対象ファイルIDリストを取得"""
         return self.config.get("tools", {}).get("file_search", {}).get("file_ids", [])
     
+    def update_vector_store_ids(self, vector_store_ids: str) -> None:
+        """
+        ベクトルストアIDを更新（カンマ区切りの文字列から）
+        
+        Args:
+            vector_store_ids: カンマ区切りのベクトルストアID文字列
+        """
+        if "file_search" in self.config.get("tools", {}):
+            # カンマ区切りの文字列をリストに変換
+            ids_list = [id.strip() for id in vector_store_ids.split(',') if id.strip()]
+            self.config["tools"]["file_search"]["vector_store_ids"] = ids_list
+            self._save_config()
+    
+    def get_vector_store_ids(self) -> List[str]:
+        """ベクトルストアIDリストを取得"""
+        return self.config.get("tools", {}).get("file_search", {}).get("vector_store_ids", [])
+    
+    def get_vector_store_ids_string(self) -> str:
+        """ベクトルストアIDをカンマ区切り文字列として取得"""
+        ids = self.get_vector_store_ids()
+        return ",".join(ids) if ids else ""
+    
     def update_enabled(self, enabled: bool) -> None:
         """
         Tools機能全体の有効/無効を更新
@@ -247,11 +270,28 @@ class ToolsConfig:
         
         # ファイル検索ツール (file_searchタイプとして定義)
         if self.is_tool_enabled("file_search"):
-            # vector_store_idsは必須パラメータなので、空でも設定する
-            # 実際のベクトルストアIDはvector_store_handlerから取得する必要がある
+            # 設定からベクトルストアIDを取得し、存在確認を行う
+            vector_store_ids = self.get_vector_store_ids()
+            
+            # 存在するIDのみフィルタリング（ローカルファイルの存在を確認）
+            valid_ids = []
+            for vs_id in vector_store_ids:
+                # ローカルファイルの存在確認
+                vs_file = f".chainlit/vector_stores/{vs_id}.json"
+                if os.path.exists(vs_file):
+                    valid_ids.append(vs_id)
+                else:
+                    print(f"⚠️ ベクトルストアID {vs_id} のローカルファイルが見つかりません。スキップします。")
+            
+            # 有効なIDが設定と異なる場合は更新
+            if set(valid_ids) != set(vector_store_ids):
+                self.config["tools"]["file_search"]["vector_store_ids"] = valid_ids
+                self._save_config()
+                print(f"✅ ベクトルストアIDリストを更新しました: {valid_ids}")
+            
             file_search_config = {
                 "type": "file_search",
-                "vector_store_ids": []  # 空のリストでも必須
+                "vector_store_ids": valid_ids  # 検証済みのIDのみ使用
             }
             tools.append(file_search_config)
         

@@ -92,6 +92,7 @@ from utils.responses_handler import responses_handler
 from utils.tools_config import tools_config
 from utils.persona_manager import persona_manager  # Phase 6: ペルソナ管理
 from utils.vector_store_handler import vector_store_handler  # Phase 7: ベクトルストア
+from utils.vector_store_sync import get_sync_manager  # ベクトルストア同期管理
 from utils.action_helper import ask_confirmation  # Actionヘルパー
 
 # アプリケーション設定
@@ -126,6 +127,77 @@ async def on_chat_resume(thread: ThreadDict):
     cl.user_session.set("thread_id", thread.get("id"))
     cl.user_session.set("previous_response_id", None)
     cl.user_session.set("message_history", [])
+    
+    # Phase 6: デフォルトペルソナを初期化
+    await persona_manager.initialize_default_personas()
+    
+    # Phase 7: ベクトルストアの初期化
+    cl.user_session.set("vector_stores", {})
+    cl.user_session.set("uploaded_files", [])
+    
+    # ベクトルストアの同期を実行
+    sync_manager = get_sync_manager(vector_store_handler)
+    await sync_manager.validate_and_clean()
+    print("✅ ベクトルストアの同期が完了しました")
+    
+    # モデルリストを動的に取得
+    available_models = config_manager.get_available_models()
+    
+    # プロキシ設定を取得
+    proxy_settings = config_manager.get_proxy_settings()
+    
+    # 設定ウィジェットを送信（履歴復元時も必要）
+    await cl.ChatSettings(
+        [
+            Select(
+                id="Model",
+                label="OpenAI - Model",
+                values=available_models,
+                initial_index=available_models.index(settings.get("DEFAULT_MODEL", "gpt-4o-mini")) if settings.get("DEFAULT_MODEL", "gpt-4o-mini") in available_models else 0,
+            ),
+            Switch(id="Tools_Enabled", label="Tools機能 - 有効/無効", initial=tools_config.is_enabled()),
+            Switch(id="Web_Search", label="Web検索 - 有効/無効", initial=tools_config.is_tool_enabled("web_search")),
+            Switch(
+                id="File_Search", 
+                label="ファイル検索 - 有効/無効", 
+                initial=tools_config.is_tool_enabled("file_search"),
+                description="有効時は下記ベクトルストアIDで指定したストアの内容を検索します"
+            ),
+            TextInput(
+                id="Vector_Store_IDs",
+                label="ベクトルストアID (カンマ区切り)",
+                initial=tools_config.get_vector_store_ids_string(),
+                placeholder="vs_xxxxx, vs_yyyyy",
+                description="使用するベクトルストアのIDをカンマ区切りで入力"
+            ),
+            Switch(
+                id="Proxy_Enabled",
+                label="プロキシ - 有効/無効",
+                initial=proxy_settings.get("PROXY_ENABLED", False)
+            ),
+            TextInput(
+                id="Proxy_URL",
+                label="プロキシURL",
+                initial=proxy_settings.get("HTTPS_PROXY", ""),
+                placeholder="http://user:pass@host:port",
+            ),
+            Slider(
+                id="Temperature",
+                label="OpenAI - Temperature",
+                initial=0.7,
+                min=0,
+                max=2,
+                step=0.1,
+                description="応答の創造性を制御 (0=決定的, 1=バランス, 2=創造的)"
+            ),
+            TextInput(
+                id="System_Prompt",
+                label="システムプロンプト",
+                initial="",
+                placeholder="AIの振る舞いを定義するプロンプトを入力...",
+            ),
+        ]
+    ).send()
     
     # 復元通知メッセージ
     await cl.Message(
@@ -304,7 +376,20 @@ async def on_chat_start():
             ),
             Switch(id="Tools_Enabled", label="Tools機能 - 有効/無効", initial=tools_config.is_enabled()),
             Switch(id="Web_Search", label="Web検索 - 有効/無効", initial=tools_config.is_tool_enabled("web_search")),
-            Switch(id="File_Search", label="ファイル検索 - 有効/無効", initial=tools_config.is_tool_enabled("file_search")),
+            Switch(
+                id="File_Search", 
+                label="ファイル検索 - 有効/無効", 
+                initial=tools_config.is_tool_enabled("file_search"),
+                description="有効時は下記ベクトルストアIDで指定したストアの内容を検索します"
+            ),
+            TextInput(
+                id="Vector_Store_IDs",
+                label="ベクトルストアID (カンマ区切り)",
+                initial=tools_config.get_vector_store_ids_string(),
+                placeholder="vs_xxxxx, vs_yyyyy",
+                description="使用するベクトルストアのIDをカンマ区切りで入力"
+            ),
+
             Switch(
                 id="Proxy_Enabled",
                 label="プロキシ - 有効/無効",
@@ -323,6 +408,7 @@ async def on_chat_start():
                 min=0,
                 max=2,
                 step=0.1,
+                description="応答の創造性を制御 (0=決定的, 1=バランス, 2=創造的)"
             ),
             TextInput(
                 id="System_Prompt",
@@ -332,6 +418,8 @@ async def on_chat_start():
             ),
         ]
     ).send()
+    
+
     
     # ユーザーIDを取得して個人用ベクトルストアを確認
     current_user = cl.user_session.get("user")
@@ -377,20 +465,18 @@ async def on_chat_start():
 
 ## 🔧 利用可能なコマンド
 - `/help` - コマンド一覧とヘルプを表示
-- `/model [モデル名]` - 使用するモデルを変更
-- `/system [プロンプト]` - システムプロンプトを設定
 - `/stats` - 統計情報を表示
-- `/clear` - 新しい会話を開始
+- `/status` - 現在の設定状態を表示
 - `/setkey [APIキー]` - OpenAI APIキーを設定
-- `/tools` - Tools機能の設定を表示
-- `/tools enable [ツール名]` - 特定のツールを有効化
-- `/tools disable [ツール名]` - 特定のツールを無効化
+- `/test` - API接続をテスト
+- `/tools` - Tools機能の状態を表示
 - `/persona` - ペルソナ一覧を表示
 - `/persona [名前]` - ペルソナを切り替え
 - `/persona create` - 新しいペルソナを作成
 - `/persona edit [名前]` - ペルソナを編集
 - `/persona delete [名前]` - ペルソナを削除
-- `/vs` または `/vector` - ベクトルストア（知識ベース）管理
+- `/vs` または `/vector` - ベクトルストア管理
+- `/kb` - ナレッジベースの状態表示
 
 💡 **ヒント**: 
 - 会話は永続的に保存されます
@@ -462,6 +548,22 @@ async def on_settings_update(settings):
         else:
             tools_config.update_tool_status("file_search", False)
             await cl.Message(content="❌ ファイル検索を無効にしました", author="System").send()
+    
+    # ベクトルストアIDの更新
+    if "Vector_Store_IDs" in settings:
+        vector_store_ids = settings["Vector_Store_IDs"]
+        tools_config.update_vector_store_ids(vector_store_ids)
+        ids_list = [id.strip() for id in vector_store_ids.split(',') if id.strip()]
+        if ids_list:
+            await cl.Message(
+                content=f"✅ ベクトルストアIDを設定しました: {', '.join(ids_list)}",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content="ℹ️ ベクトルストアIDをクリアしました",
+                author="System"
+            ).send()
     
     # プロキシ設定の更新
     if "Proxy_Enabled" in settings or "Proxy_URL" in settings:
@@ -543,6 +645,12 @@ async def on_message(message: cl.Message):
     
     # Phase 7: ファイルアップロード処理
     if message.elements:
+        # ファイル処理中のフラグを設定
+        processing_msg = await cl.Message(
+            content="📤 ファイルをアップロード中です。しばらくお待ちください...",
+            author="System"
+        ).send()
+        
         uploaded_file_ids = []
         for element in message.elements:
             if element.type == "file":
@@ -561,32 +669,46 @@ async def on_message(message: cl.Message):
                         })
                         cl.user_session.set("uploaded_files", uploaded_files)
                         
-                        await cl.Message(
-                            content=f"✅ ファイルをアップロードしました: {element.name}",
-                            author="System"
-                        ).send()
+                        # 処理状況を更新
+                        processing_msg.content = f"✅ ファイルをアップロードしました: {element.name}"
+                        await processing_msg.update()
                 except Exception as e:
-                    await cl.Message(
-                        content=f"❌ ファイルアップロードエラー: {e}",
-                        author="System"
-                    ).send()
+                    processing_msg.content = f"❌ ファイルアップロードエラー: {e}"
+                    await processing_msg.update()
         
         # アップロードされたファイルをベクトルストアに追加するか確認
         if uploaded_file_ids:
+            # ベクトルストアに追加するか確認（ユーザーの応答を待つ）
             res = await cl.AskActionMessage(
                 content=f"{len(uploaded_file_ids)}件のファイルをナレッジベースに追加しますか？",
                 actions=[
-                    cl.Action(name="add_to_kb", payload={"action": "yes"}, label="はい"),
-                    cl.Action(name="skip", payload={"action": "no"}, label="いいえ")
-                ]
+                    cl.Action(name="add_to_kb", value="yes", payload={"action": "yes"}, label="はい"),
+                    cl.Action(name="skip", value="no", payload={"action": "no"}, label="いいえ")
+                ],
+                timeout=60  # 60秒のタイムアウトを設定
             ).send()
             
+            # ユーザーの応答を待つ
             if res and res.get("payload", {}).get("action") == "yes":
                 # ベクトルストアに追加
                 await add_files_to_knowledge_base(uploaded_file_ids)
+                await cl.Message(
+                    content="✅ ファイルをナレッジベースに追加しました。",
+                    author="System"
+                ).send()
+            else:
+                await cl.Message(
+                    content="ℹ️ ファイルはアップロードされましたが、ナレッジベースには追加されませんでした。",
+                    author="System"
+                ).send()
         
         # ファイルがアップロードされた場合でも、メッセージがあれば処理を続ける
         if not user_input:
+            # アップロード完了メッセージ
+            await cl.Message(
+                content="✅ ファイルアップロード処理が完了しました。メッセージを入力してください。",
+                author="System"
+            ).send()
             return
     
     # コマンド処理
@@ -670,7 +792,8 @@ async def on_message(message: cl.Message):
                 cl.user_session.set("previous_response_id", chunk["id"])
             if chunk.get("output_text") and not response_text:
                 response_text = chunk["output_text"]
-                await ai_message.update(content=response_text)
+                ai_message.content = response_text
+                await ai_message.update()
             break
         
         # Chat Completions APIのフォールバック処理
@@ -700,7 +823,8 @@ async def on_message(message: cl.Message):
                 # 通常の応答
                 if message_data.get("content"):
                     response_text = message_data["content"]
-                    await ai_message.update(content=response_text)
+                    ai_message.content = response_text
+                    await ai_message.update()
             
             # ツール呼び出しがある場合
             if message_data.get("tool_calls"):
@@ -758,7 +882,8 @@ async def on_message(message: cl.Message):
                     elif final_chunk.get("type") == "response_complete":
                         if final_chunk.get("output_text") and not response_text:
                             response_text = final_chunk["output_text"]
-                            await final_msg.update(content=response_text)
+                            final_msg.content = response_text
+                            await final_msg.update()
                         break
                     
                     # Chat Completions APIフォールバック
@@ -780,7 +905,8 @@ async def on_message(message: cl.Message):
                             final_message = final_choice["message"]
                             if final_message.get("content"):
                                 response_text = final_message["content"]
-                                await final_msg.update(content=response_text)
+                                final_msg.content = response_text
+                                await final_msg.update()
                             break
             
             # response_idを保存（会話継続用）
@@ -822,7 +948,8 @@ async def on_message(message: cl.Message):
         error_msg = "❌ AI応答の生成に失敗しました。"
         await cl.Message(content=error_msg, author="System").send()
         app_logger.error(f"AI応答生成失敗", user_input=user_input[:100])
-        await ai_message.update(content="❌ AI応答の生成に失敗しました。")
+        ai_message.content = "❌ AI応答の生成に失敗しました。"
+        await ai_message.update()
 
 
 async def handle_command(user_input: str):
@@ -834,21 +961,8 @@ async def handle_command(user_input: str):
     
     if cmd == "/help":
         await show_help()
-    elif cmd == "/model":
-        if len(parts) > 1:
-            await change_model(parts[1])
-        else:
-            await cl.Message(
-                content="❌ モデル名を指定してください。\n例: `/model gpt-4o`",
-                author="System"
-            ).send()
-    elif cmd == "/system":
-        args = user_input[len("/system"):].strip() if len(user_input) > len("/system") else ""
-        await set_system_prompt(args)
     elif cmd == "/stats":
         await show_statistics()
-    elif cmd == "/clear":
-        await start_new_chat()
     elif cmd == "/setkey":
         if len(parts) > 1:
             await set_api_key(parts[1])
@@ -864,15 +978,7 @@ async def handle_command(user_input: str):
     elif cmd == "/settings":
         await show_settings()
     elif cmd == "/tools":
-        if len(parts) == 1:
-            await show_tools_status()
-        elif len(parts) >= 3:
-            await handle_tools_command(parts[1], parts[2])
-        else:
-            await cl.Message(
-                content="❌ コマンド形式が正しくありません。\n例: `/tools enable web_search`",
-                author="System"
-            ).send()
+        await show_tools_status()
     elif cmd == "/persona" or cmd == "/personas":
         if len(parts) == 1:
             await show_personas()
@@ -958,9 +1064,27 @@ async def handle_command(user_input: str):
                         content="❌ 使用するベクトルストアIDを指定してください。\n例: `/vs use vs_xxxxx`",
                         author="System"
                     ).send()
+            elif action == "sync":
+                await sync_vector_stores()
+            elif action == "rename":
+                if len(parts) > 2:
+                    # IDと新しい名前を分割
+                    rename_parts = user_input[len("/vs rename"):].strip().split(maxsplit=1)
+                    if len(rename_parts) == 2:
+                        await rename_vector_store(rename_parts[0], rename_parts[1])
+                    else:
+                        await cl.Message(
+                            content="❌ ベクトルストアIDと新しい名前を指定してください。\n例: `/vs rename vs_xxxxx 新しい名前`",
+                            author="System"
+                        ).send()
+                else:
+                    await cl.Message(
+                        content="❌ ベクトルストアIDと新しい名前を指定してください。\n例: `/vs rename vs_xxxxx 新しい名前`",
+                        author="System"
+                    ).send()
             else:
                 await cl.Message(
-                    content="❌ 不明なアクション: " + action + "\n使用可能: create, list, info, delete, files, use",
+                    content="❌ 不明なアクション: " + action + "\n使用可能: create, sync, list, info, delete, files, use, rename",
                     author="System"
                 ).send()
     else:
@@ -1045,27 +1169,18 @@ async def show_help():
 
 ## 基本コマンド
 - `/help` - このヘルプを表示
-- `/clear` - 新しい会話を開始
 - `/stats` - 現在のセッションの統計を表示
 - `/status` - 設定状態を表示
 
 ## 設定コマンド
 - `/setkey [APIキー]` - OpenAI APIキーを設定
-- `/model [モデル名]` - 使用するモデルを変更
-  - 例: `/model gpt-4o-mini`
-  - 例: `/model gpt-4o`
-- `/system [プロンプト]` - システムプロンプトを設定
-  - 例: `/system あなたは親切なアシスタントです`
 - `/test` - API接続をテスト
 
-## Tools機能コマンド
+💡 **ヒント**: モデル変更、システムプロンプト設定、Temperature調整は画面右上の設定パネルから行えます。
+
+## Tools機能
 - `/tools` - Tools機能の現在の設定を表示
-- `/tools enable web_search` - Web検索を有効化
-- `/tools disable web_search` - Web検索を無効化
-- `/tools enable file_search` - ファイル検索を有効化
-- `/tools disable file_search` - ファイル検索を無効化
-- `/tools enable all` - すべてのツールを有効化
-- `/tools disable all` - すべてのツールを無効化
+- **設定の変更は画面右上の設定パネルから行ってください**
 
 ## ペルソナ管理
 - `/persona` - ペルソナ一覧を表示
@@ -1073,6 +1188,16 @@ async def show_help():
 - `/persona create` - 新しいペルソナを作成
 - `/persona edit [名前]` - ペルソナを編集（モデル/Temperature/プロンプト等）
 - `/persona delete [名前]` - カスタムペルソナを削除
+
+## ベクトルストア管理
+- `/vs` または `/vector` - ベクトルストア一覧を表示
+- `/vs sync` - ベクトルストアを同期
+- `/vs create [名前]` - 新しいベクトルストアを作成
+- `/vs info [ID]` - 詳細情報を表示
+- `/vs files [ID]` - ファイル一覧を表示
+- `/vs use [ID]` - ベクトルストアを使用
+- `/vs rename [ID] [新しい名前]` - ベクトルストアの名前を変更
+- `/vs delete [ID]` - ベクトルストアを削除
 
 ## 💡 ヒント
 - 会話履歴は自動的に保存されます
@@ -1108,11 +1233,9 @@ async def show_tools_status():
 - **ツール呼び出し表示**: {"✅ 有効" if tools_config.get_setting("show_tool_calls", True) else "❌ 無効"}
 - **ツール結果表示**: {"✅ 有効" if tools_config.get_setting("show_tool_results", True) else "❌ 無効"}
 
-## 使用方法
-- `/tools enable [ツール名]` - ツールを有効化
-- `/tools disable [ツール名]` - ツールを無効化
-- `/tools enable all` - すべて有効化
-- `/tools disable all` - すべて無効化
+## 設定の変更方法
+- **画面右上の設定パネルから各ツールの有効/無効を切り替えてください**
+- コマンドによる個別設定は廃止されました
 """
     
     await cl.Message(content=tools_message, author="System").send()
@@ -1652,6 +1775,44 @@ async def edit_persona(persona_name: str):
             ).send()
 
 
+async def sync_vector_stores():
+    """ベクトルストアを同期"""
+    await cl.Message(
+        content="🔄 ベクトルストアを同期中...",
+        author="System"
+    ).send()
+    
+    sync_manager = get_sync_manager(vector_store_handler)
+    result = await sync_manager.sync_all()
+    
+    message = "🌐 **ベクトルストア同期結果**\n\n"
+    
+    if result["synced"]:
+        message += f"✅ 同期: {len(result['synced'])}件\n"
+        for vs_id in result["synced"]:
+            message += f"  - `{vs_id}`\n"
+    
+    if result["removed_from_local"]:
+        message += f"\n🗑️ ローカルから削除: {len(result['removed_from_local'])}件\n"
+        for vs_id in result["removed_from_local"]:
+            message += f"  - `{vs_id}`\n"
+    
+    if result["removed_from_config"]:
+        message += f"\n🗑️ 設定から削除: {len(result['removed_from_config'])}件\n"
+        for vs_id in result["removed_from_config"]:
+            message += f"  - `{vs_id}`\n"
+    
+    if result["errors"]:
+        message += f"\n❌ エラー: {len(result['errors'])}件\n"
+        for error in result["errors"]:
+            message += f"  - {error}\n"
+    
+    if not any([result["synced"], result["removed_from_local"], result["removed_from_config"], result["errors"]]):
+        message += "✔️ すべて同期済みです"
+    
+    await cl.Message(content=message, author="System").send()
+
+
 async def show_vector_stores():
     """ベクトルストア一覧を表示"""
     vector_stores = await vector_store_handler.list_vector_stores()
@@ -1683,6 +1844,7 @@ async def show_vector_stores():
     message += "- `/vs info [ID]` - 詳細情報を表示\n"
     message += "- `/vs files [ID]` - ファイル一覧を表示\n"
     message += "- `/vs use [ID]` - ベクトルストアを使用\n"
+    message += "- `/vs rename [ID] [新しい名前]` - ベクトルストアの名前を変更\n"
     message += "- `/vs delete [ID]` - ベクトルストアを削除"
     
     await cl.Message(content=message, author="System").send()
@@ -1772,6 +1934,32 @@ async def show_vector_store_files(vs_id: str):
     else:
         await cl.Message(
             content=f"📁 ベクトルストア `{vs_id}` にファイルがありません。",
+            author="System"
+        ).send()
+
+
+async def rename_vector_store(vs_id: str, new_name: str):
+    """ベクトルストアの名前を変更"""
+    # ベクトルストアが存在するか確認
+    vs_info = await vector_store_handler.get_vector_store_info(vs_id)
+    
+    if vs_info:
+        # 名前を変更
+        success = await vector_store_handler.rename_vector_store(vs_id, new_name)
+        
+        if success:
+            await cl.Message(
+                content=f"✅ ベクトルストアの名前を変更しました\n\n🆔 ID: `{vs_id}`\n📁 新しい名前: {new_name}",
+                author="System"
+            ).send()
+        else:
+            await cl.Message(
+                content=f"❌ ベクトルストアの名前変更に失敗しました。",
+                author="System"
+            ).send()
+    else:
+        await cl.Message(
+            content=f"❌ ベクトルストア `{vs_id}` が見つかりません。",
             author="System"
         ).send()
 
@@ -1942,6 +2130,11 @@ async def show_settings():
         for tool_name, enabled in tools_status.items():
             status_icon = '\u2705' if enabled else '\u274c'
             message += f"- **{tool_name}**: {status_icon}\n"
+    
+    # ベクトルストアIDの表示
+    vector_store_ids = tools_config.get_vector_store_ids_string()
+    if vector_store_ids:
+        message += f"\n**参照ベクトルストア**: {vector_store_ids}\n"
     message += "\n"
     
     # アクションボタン
