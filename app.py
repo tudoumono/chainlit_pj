@@ -921,12 +921,20 @@ async def on_message(message: cl.Message):
     # 参照: openai responseAPI reference (Text generation).md
     # 参照: openai responseAPI reference (Conversation state).md
     # ============================================================
+    # セッション情報を渡してベクトルストアIDを利用可能にする
+    session_data = {
+        "vector_store_ids": cl.user_session.get("vector_store_ids", {}),
+        "personal_vs_id": cl.user_session.get("personal_vs_id"),
+        "thread_vs_id": cl.user_session.get("thread_vs_id")
+    }
+    
     async for chunk in responses_handler.create_response(
         messages=messages,
         model=model,
         stream=True,
         use_tools=tools_enabled,
-        previous_response_id=previous_response_id
+        previous_response_id=previous_response_id,
+        session=session_data
     ):
         if "error" in chunk:
             app_logger.error(f"API Error: {chunk['error']}")

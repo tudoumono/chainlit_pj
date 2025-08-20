@@ -670,3 +670,12 @@
 - **修正内容**:
   - システムメッセージの送信を削除（ログ記録のみに変更）
   - ベクトルストアID処理にNoneチェックを追加
+
+## 2025年8月21日（2回目の修正）
+### ベクトルストアの内容が参照されない問題の修正
+- **問題**: ベクトルストアにファイルをアップロードしてもAIがその内容を参照しない
+- **原因**: `responses_handler.create_response`呼び出し時にセッション情報が渡されていない
+- **修正内容**:
+  - `utils/responses_handler.py`の`create_response`メソッドにsessionパラメータを追加
+  - `tools_config.build_tools_parameter`メソッドを呼ぶ際にセッション情報を渡すように修正
+  - `app.py`の`on_message`関数でセッション情報（vector_store_ids）を渡すように修正

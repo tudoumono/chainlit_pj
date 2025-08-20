@@ -125,6 +125,7 @@ class ResponsesAPIHandler:
         use_tools: bool = None,
         tool_choice: Union[str, Dict] = None,
         previous_response_id: str = None,
+        session: Optional[Dict] = None,  # Chainlitセッションを追加
         **kwargs
     ) -> AsyncGenerator[Dict, None]:
         """
@@ -214,7 +215,7 @@ class ResponsesAPIHandler:
         
         # Tools機能の設定
         if use_tools and self.tools_config.is_enabled():
-            tools = self.tools_config.build_tools_parameter()
+            tools = self.tools_config.build_tools_parameter(session)  # セッションを渡す
             if tools:
                 response_params["tools"] = tools
                 response_params["tool_choice"] = tool_choice or "auto"
@@ -260,7 +261,7 @@ class ResponsesAPIHandler:
                 
                 # Tools機能の設定
                 if use_tools and self.tools_config.is_enabled():
-                    tools = self.tools_config.build_tools_parameter()
+                    tools = self.tools_config.build_tools_parameter(session)  # セッションを渡す
                     if tools:
                         chat_params["tools"] = tools
                         chat_params["tool_choice"] = tool_choice or "auto"
