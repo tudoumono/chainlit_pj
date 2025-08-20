@@ -220,14 +220,7 @@ async def on_chat_resume(thread: ThreadDict):
                 id="VS_Layer_Thread",
                 label="ベクトル層3: チャット単位 - 有効/無効",
                 initial=tools_config.is_layer_enabled("thread"),
-                description="このチャット専用のナレッジベース"
-            ),
-            TextInput(
-                id="VS_ID_Thread",
-                label="チャット単位ベクトルストアID",
-                initial=cl.user_session.get("vector_store_ids", {}).get("session", ""),
-                placeholder="vs_zzzzz",
-                description="このチャット専用のベクトルストアのID"
+                description="このチャット専用のナレッジベース（自動作成）"
             ),
             Switch(
                 id="Proxy_Enabled",
@@ -504,14 +497,7 @@ async def on_chat_start():
                 id="VS_Layer_Thread",
                 label="ベクトル層3: チャット単位 - 有効/無効",
                 initial=tools_config.is_layer_enabled("thread"),
-                description="このチャット専用のナレッジベース"
-            ),
-            TextInput(
-                id="VS_ID_Thread",
-                label="チャット単位ベクトルストアID",
-                initial=cl.user_session.get("vector_store_ids", {}).get("session", ""),
-                placeholder="vs_zzzzz",
-                description="このチャット専用のベクトルストアのID"
+                description="このチャット専用のナレッジベース（自動作成）"
             ),
             Switch(
                 id="Proxy_Enabled",
@@ -715,24 +701,7 @@ async def on_settings_update(settings):
     if "VS_Layer_Thread" in settings:
         tools_config.set_layer_enabled("thread", settings["VS_Layer_Thread"])
         status = "有効" if settings["VS_Layer_Thread"] else "無効"
-        await cl.Message(content=f"✅ チャット単位ベクトルストアを{status}にしました", author="System").send()
-    
-    if "VS_ID_Thread" in settings:
-        thread_id = settings["VS_ID_Thread"].strip()
-        if thread_id:
-            # セッションに保存
-            vs_ids = cl.user_session.get("vector_store_ids", {})
-            vs_ids["session"] = thread_id
-            cl.user_session.set("vector_store_ids", vs_ids)
-            
-            # データベースにも保存
-            current_thread_id = cl.user_session.get("thread_id") or cl.context.session.thread_id
-            if current_thread_id:
-                data_layer_instance = cl_data._data_layer
-                if data_layer_instance and hasattr(data_layer_instance, 'update_thread_vector_store'):
-                    await data_layer_instance.update_thread_vector_store(current_thread_id, thread_id)
-            
-            await cl.Message(content=f"✅ チャット単位ベクトルストアIDを設定: {thread_id}", author="System").send()
+        await cl.Message(content=f"✅ チャット単位ベクトルストアを{status}にしました（ファイルアップロード時に自動作成）", author="System").send()
     
     # プロキシ設定の更新
     if "Proxy_Enabled" in settings or "Proxy_URL" in settings:
