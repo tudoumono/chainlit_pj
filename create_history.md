@@ -609,3 +609,16 @@
 - response_handler.pyとresponse_handler_corrected.pyを.backupファイルに移動（重複のため）
 - responses_handler.pyのみが実際に使用されているため他は不要と判定
 - utils/__init__.pyのインポートエラー修正（response_handler → responses_handler）
+
+## 2025年8月20日
+### ベクトルストア実装の確認
+- 三層すべて`vector_stores.create()` APIを使用していることを確認
+- File search実装がResponses API形式ではなくChat Completions API形式になっている
+- 現在はChat Completions APIにフォールバックして動作中
+
+## 2025年8月20日（2回目の修正）
+### ベクトルストア実装のResponses API対応
+- vector_store_handler.pyをOpenAI Responses API準拠に修正
+- 三層のベクトルストア管理を明確化（会社全体、個人ユーザー、チャット単位）
+- client.vector_stores.create()を優先使用（betaはフォールバックのみ）
+- File Search機能をResponses API形式に変更
