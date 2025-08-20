@@ -387,12 +387,31 @@ class VectorStoreHandler:
                 vector_stores = await self.async_client.vector_stores.list()
                 stores_list = []
                 for vs in vector_stores.data:
-                    stores_list.append({
-                        "id": vs.id,
-                        "name": vs.name,
-                        "created_at": vs.created_at,
-                        "status": "completed"
-                    })
+                    # 各ベクトルストアの詳細情報を取得してファイル数を含める
+                    try:
+                        vs_detail = await self.async_client.vector_stores.retrieve(vs.id)
+                        # ファイル数を取得
+                        file_count = 0
+                        if hasattr(vs_detail, 'file_counts'):
+                            file_count = vs_detail.file_counts.total if hasattr(vs_detail.file_counts, 'total') else vs_detail.file_counts
+                        
+                        stores_list.append({
+                            "id": vs_detail.id,
+                            "name": vs_detail.name,
+                            "file_counts": {"total": file_count} if isinstance(file_count, int) else file_count,
+                            "created_at": vs_detail.created_at,
+                            "status": getattr(vs_detail, 'status', 'completed')
+                        })
+                    except Exception as e:
+                        # 詳細取得に失敗した場合は基本情報のみ
+                        print(f"⚠️ ベクトルストア {vs.id} の詳細取得に失敗: {e}")
+                        stores_list.append({
+                            "id": vs.id,
+                            "name": vs.name,
+                            "file_counts": {"total": 0},
+                            "created_at": vs.created_at,
+                            "status": "completed"
+                        })
                 return stores_list
                 
             except AttributeError:

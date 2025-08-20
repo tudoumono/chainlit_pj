@@ -647,3 +647,12 @@
   - VS_ID_Threadウィジェットを削除
   - on_settings_update関数から3層目のID設定処理を削除
   - ステータスメッセージに「ファイルアップロード時に自動作成」を追加
+
+## 2025年8月21日
+### ベクトルストアのファイル数表示修正
+- **問題**: `/vs`コマンドでベクトルストアのファイル数が0と表示される
+- **原因**: `list_vector_stores`メソッドでResponses API使用時にファイル数を取得していなかった
+- **修正内容**:
+  - `utils/vector_store_handler.py`の`list_vector_stores`メソッドを修正
+  - Responses APIでも各ベクトルストアのretrieveを呼び出して詳細情報を取得
+  - file_counts属性を確認してファイル数を正しく取得
