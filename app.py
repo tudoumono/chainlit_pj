@@ -902,7 +902,8 @@ async def on_message(message: cl.Message):
     messages.append({"role": "user", "content": user_input})
     
     # Tools機能の状態をログに記録
-    tools_enabled = tools_config.is_enabled()
+    # Tools全体が無効でもfile_searchが有効ならツールを使用
+    tools_enabled = tools_config.is_enabled() or tools_config.is_tool_enabled("file_search")
     if tools_enabled:
         enabled_tools = tools_config.get_enabled_tools()
         app_logger.debug(f"🔧 Tools機能有効", tools=enabled_tools)

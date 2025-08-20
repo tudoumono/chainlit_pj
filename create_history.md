@@ -679,3 +679,16 @@
   - `utils/responses_handler.py`の`create_response`メソッドにsessionパラメータを追加
   - `tools_config.build_tools_parameter`メソッドを呼ぶ際にセッション情報を渡すように修正
   - `app.py`の`on_message`関数でセッション情報（vector_store_ids）を渡すように修正
+
+## 2025年8月21日（3回目の修正）
+### file_searchツールのvector_store_idsエラー修正
+- **問題**: `Missing required parameter: 'tools[0].vector_store_ids'`エラーが発生
+- **原因**: 
+  1. Tools_EnabledがFalseの場合、`build_tools_parameter`がNoneを返していた
+  2. file_searchツールの構造が正しくなかった
+- **修正内容**:
+  - `utils/tools_config.py`の`build_tools_parameter`メソッドを修正
+    - Tools全体が無効でもfile_searchが有効なら動作するように変更
+    - file_searchツールの構造を`{"type": "file_search", "vector_store_ids": [...]}`に修正
+  - `app.py`の`on_message`関数でtools_enabledの判定を修正
+    - `tools_enabled = tools_config.is_enabled() or tools_config.is_tool_enabled("file_search")`に変更

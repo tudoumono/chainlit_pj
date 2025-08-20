@@ -275,19 +275,18 @@ class ToolsConfig:
         Returns:
             有効なツールのリスト（API用フォーマット）
         """
-        if not self.is_enabled():
-            return None
-        
+        # Tools全体が無効でも、個別のツールが有効なら動作させる
         tools = []
         
         # Web検索ツール (web_search_previewタイプとして定義)
-        if self.is_tool_enabled("web_search"):
+        if self.is_enabled() and self.is_tool_enabled("web_search"):
             tools.append({
                 "type": "web_search_preview",
                 "search_context_size": "medium",  # low, medium, high
             })
         
         # ファイル検索ツール (file_searchタイプとして定義)
+        # Tools全体が無効でもfile_searchが有効なら動作
         if self.is_tool_enabled("file_search"):
             vector_store_ids = []
             
@@ -316,24 +315,23 @@ class ToolsConfig:
             # vector_store_idsが空の場合はfile_searchツールを追加しない
             # OpenAI APIは空のvector_store_idsを許可しないため
             if vector_store_ids:
+                # Responses API形式のfile_searchツール構造
                 file_search_config = {
                     "type": "file_search",
-                    "file_search": {
-                        "vector_store_ids": vector_store_ids
-                    }
+                    "vector_store_ids": vector_store_ids  # 直接vector_store_idsを配置
                 }
                 tools.append(file_search_config)
             else:
                 print("⚠️ file_searchツールは有効ですが、ベクトルストアが設定されていないためスキップします")
         
         # コードインタープリター (code_interpreterタイプとして定義)
-        if self.is_tool_enabled("code_interpreter"):
+        if self.is_enabled() and self.is_tool_enabled("code_interpreter"):
             tools.append({
                 "type": "code_interpreter"
             })
         
         # カスタム関数
-        if self.is_tool_enabled("custom_functions"):
+        if self.is_enabled() and self.is_tool_enabled("custom_functions"):
             custom_functions = self.config.get("tools", {}).get("custom_functions", {}).get("functions", [])
             for func in custom_functions:
                 tools.append({
