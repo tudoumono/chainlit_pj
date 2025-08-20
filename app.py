@@ -187,14 +187,47 @@ async def on_chat_resume(thread: ThreadDict):
                 id="File_Search", 
                 label="ファイル検索 - 有効/無効", 
                 initial=tools_config.is_tool_enabled("file_search"),
-                description="有効時は下記ベクトルストアIDで指定したストアの内容を検索します"
+                description="有効時は下記ベクトルストアで指定したストアの内容を検索します"
+            ),
+            # ベクトルストア3層設定
+            Switch(
+                id="VS_Layer_Company",
+                label="ベクトル層1: 会社全体 - 有効/無効",
+                initial=tools_config.is_layer_enabled("company"),
+                description="会社全体で共有するナレッジベース"
             ),
             TextInput(
-                id="Vector_Store_IDs",
-                label="ベクトルストアID (カンマ区切り)",
-                initial=tools_config.get_vector_store_ids_string(),
-                placeholder="vs_xxxxx, vs_yyyyy",
-                description="使用するベクトルストアのIDをカンマ区切りで入力"
+                id="VS_ID_Company",
+                label="会社全体ベクトルストアID",
+                initial=os.getenv("COMPANY_VECTOR_STORE_ID", ""),
+                placeholder="vs_xxxxx",
+                description="会社全体で使用するベクトルストアのID"
+            ),
+            Switch(
+                id="VS_Layer_Personal",
+                label="ベクトル層2: 個人ユーザー - 有効/無効",
+                initial=tools_config.is_layer_enabled("personal"),
+                description="個人ユーザー専用のナレッジベース"
+            ),
+            TextInput(
+                id="VS_ID_Personal",
+                label="個人ベクトルストアID",
+                initial=cl.user_session.get("vector_store_ids", {}).get("personal", ""),
+                placeholder="vs_yyyyy",
+                description="個人専用のベクトルストアのID"
+            ),
+            Switch(
+                id="VS_Layer_Thread",
+                label="ベクトル層3: チャット単位 - 有効/無効",
+                initial=tools_config.is_layer_enabled("thread"),
+                description="このチャット専用のナレッジベース"
+            ),
+            TextInput(
+                id="VS_ID_Thread",
+                label="チャット単位ベクトルストアID",
+                initial=cl.user_session.get("vector_store_ids", {}).get("session", ""),
+                placeholder="vs_zzzzz",
+                description="このチャット専用のベクトルストアのID"
             ),
             Switch(
                 id="Proxy_Enabled",
@@ -438,16 +471,48 @@ async def on_chat_start():
                 id="File_Search", 
                 label="ファイル検索 - 有効/無効", 
                 initial=tools_config.is_tool_enabled("file_search"),
-                description="有効時は下記ベクトルストアIDで指定したストアの内容を検索します"
+                description="有効時は下記ベクトルストアで指定したストアの内容を検索します"
+            ),
+            # ベクトルストア3層設定
+            Switch(
+                id="VS_Layer_Company",
+                label="ベクトル層1: 会社全体 - 有効/無効",
+                initial=tools_config.is_layer_enabled("company"),
+                description="会社全体で共有するナレッジベース"
             ),
             TextInput(
-                id="Vector_Store_IDs",
-                label="ベクトルストアID (カンマ区切り)",
-                initial=tools_config.get_vector_store_ids_string(),
-                placeholder="vs_xxxxx, vs_yyyyy",
-                description="使用するベクトルストアのIDをカンマ区切りで入力"
+                id="VS_ID_Company",
+                label="会社全体ベクトルストアID",
+                initial=os.getenv("COMPANY_VECTOR_STORE_ID", ""),
+                placeholder="vs_xxxxx",
+                description="会社全体で使用するベクトルストアのID"
             ),
-
+            Switch(
+                id="VS_Layer_Personal",
+                label="ベクトル層2: 個人ユーザー - 有効/無効",
+                initial=tools_config.is_layer_enabled("personal"),
+                description="個人ユーザー専用のナレッジベース"
+            ),
+            TextInput(
+                id="VS_ID_Personal",
+                label="個人ベクトルストアID",
+                initial=cl.user_session.get("vector_store_ids", {}).get("personal", ""),
+                placeholder="vs_yyyyy",
+                description="個人専用のベクトルストアのID"
+            ),
+            Switch(
+                id="VS_Layer_Thread",
+                label="ベクトル層3: チャット単位 - 有効/無効",
+                initial=tools_config.is_layer_enabled("thread"),
+                description="このチャット専用のナレッジベース"
+            ),
+            TextInput(
+                id="VS_ID_Thread",
+                label="チャット単位ベクトルストアID",
+                initial=cl.user_session.get("vector_store_ids", {}).get("session", ""),
+                placeholder="vs_zzzzz",
+                description="このチャット専用のベクトルストアのID"
+            ),
             Switch(
                 id="Proxy_Enabled",
                 label="プロキシ - 有効/無効",
@@ -607,21 +672,67 @@ async def on_settings_update(settings):
             tools_config.update_tool_status("file_search", False)
             await cl.Message(content="❌ ファイル検索を無効にしました", author="System").send()
     
-    # ベクトルストアIDの更新
-    if "Vector_Store_IDs" in settings:
-        vector_store_ids = settings["Vector_Store_IDs"]
-        tools_config.update_vector_store_ids(vector_store_ids)
-        ids_list = [id.strip() for id in vector_store_ids.split(',') if id.strip()]
-        if ids_list:
-            await cl.Message(
-                content=f"✅ ベクトルストアIDを設定しました: {', '.join(ids_list)}",
-                author="System"
-            ).send()
-        else:
-            await cl.Message(
-                content="ℹ️ ベクトルストアIDをクリアしました",
-                author="System"
-            ).send()
+    # ベクトルストア3層の設定更新
+    
+    # 1層目: 会社全体
+    if "VS_Layer_Company" in settings:
+        tools_config.set_layer_enabled("company", settings["VS_Layer_Company"])
+        status = "有効" if settings["VS_Layer_Company"] else "無効"
+        await cl.Message(content=f"✅ 会社全体ベクトルストアを{status}にしました", author="System").send()
+    
+    if "VS_ID_Company" in settings:
+        company_id = settings["VS_ID_Company"].strip()
+        if company_id:
+            # .envファイルを更新
+            config_manager.update_env_value("COMPANY_VECTOR_STORE_ID", company_id)
+            os.environ["COMPANY_VECTOR_STORE_ID"] = company_id
+            await cl.Message(content=f"✅ 会社全体ベクトルストアIDを設定: {company_id}", author="System").send()
+    
+    # 2層目: 個人ユーザー
+    if "VS_Layer_Personal" in settings:
+        tools_config.set_layer_enabled("personal", settings["VS_Layer_Personal"])
+        status = "有効" if settings["VS_Layer_Personal"] else "無効"
+        await cl.Message(content=f"✅ 個人ベクトルストアを{status}にしました", author="System").send()
+    
+    if "VS_ID_Personal" in settings:
+        personal_id = settings["VS_ID_Personal"].strip()
+        if personal_id:
+            # セッションに保存
+            vs_ids = cl.user_session.get("vector_store_ids", {})
+            vs_ids["personal"] = personal_id
+            cl.user_session.set("vector_store_ids", vs_ids)
+            
+            # データベースにも保存
+            user = cl.user_session.get("user")
+            if user:
+                data_layer_instance = cl_data._data_layer
+                if data_layer_instance and hasattr(data_layer_instance, 'set_user_vector_store_id'):
+                    await data_layer_instance.set_user_vector_store_id(user.identifier, personal_id)
+            
+            await cl.Message(content=f"✅ 個人ベクトルストアIDを設定: {personal_id}", author="System").send()
+    
+    # 3層目: チャット単位
+    if "VS_Layer_Thread" in settings:
+        tools_config.set_layer_enabled("thread", settings["VS_Layer_Thread"])
+        status = "有効" if settings["VS_Layer_Thread"] else "無効"
+        await cl.Message(content=f"✅ チャット単位ベクトルストアを{status}にしました", author="System").send()
+    
+    if "VS_ID_Thread" in settings:
+        thread_id = settings["VS_ID_Thread"].strip()
+        if thread_id:
+            # セッションに保存
+            vs_ids = cl.user_session.get("vector_store_ids", {})
+            vs_ids["session"] = thread_id
+            cl.user_session.set("vector_store_ids", vs_ids)
+            
+            # データベースにも保存
+            current_thread_id = cl.user_session.get("thread_id") or cl.context.session.thread_id
+            if current_thread_id:
+                data_layer_instance = cl_data._data_layer
+                if data_layer_instance and hasattr(data_layer_instance, 'update_thread_vector_store'):
+                    await data_layer_instance.update_thread_vector_store(current_thread_id, thread_id)
+            
+            await cl.Message(content=f"✅ チャット単位ベクトルストアIDを設定: {thread_id}", author="System").send()
     
     # プロキシ設定の更新
     if "Proxy_Enabled" in settings or "Proxy_URL" in settings:

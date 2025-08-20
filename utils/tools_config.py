@@ -299,13 +299,17 @@ class ToolsConfig:
             
             # 2層目：個人（セッションから）
             if session and self.is_layer_enabled("personal"):
-                personal_vs_id = session.get("personal_vs_id")
+                # vector_store_ids辞書から取得
+                vs_ids = session.get("vector_store_ids", {})
+                personal_vs_id = vs_ids.get("personal") or session.get("personal_vs_id")
                 if personal_vs_id:
                     vector_store_ids.append(personal_vs_id)
             
             # 3層目：チャット（セッションから）
             if session and self.is_layer_enabled("thread"):
-                thread_vs_id = session.get("thread_vs_id")
+                # vector_store_ids辞書から取得
+                vs_ids = session.get("vector_store_ids", {})
+                thread_vs_id = vs_ids.get("session") or session.get("thread_vs_id")
                 if thread_vs_id:
                     vector_store_ids.append(thread_vs_id)
             
