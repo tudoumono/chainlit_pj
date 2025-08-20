@@ -132,8 +132,34 @@ async def on_chat_resume(thread: ThreadDict):
     await persona_manager.initialize_default_personas()
     
     # Phase 7: ベクトルストアの初期化
-    cl.user_session.set("vector_stores", {})
     cl.user_session.set("uploaded_files", [])
+    
+    # ユーザー情報を取得
+    user = cl.user_session.get("user")
+    if user:
+        user_id = user.identifier
+        
+        # 1層目: .envから取得
+        company_vs_id = os.getenv("COMPANY_VECTOR_STORE_ID")
+        
+        # 2層目: データベースから取得
+        data_layer_instance = cl_data._data_layer
+        personal_vs_id = None
+        
+        if data_layer_instance and hasattr(data_layer_instance, 'get_user_vector_store_id'):
+            personal_vs_id = await data_layer_instance.get_user_vector_store_id(user_id)
+        
+        # 3層目: 復元したスレッド情報から取得
+        session_vs_id = thread.get("vector_store_id")
+        
+        # セッションにベクトルストアIDを保存
+        cl.user_session.set("vector_store_ids", {
+            "company": company_vs_id,
+            "personal": personal_vs_id,
+            "session": session_vs_id
+        })
+    else:
+        cl.user_session.set("vector_store_ids", {})
     
     # ベクトルストアの同期を実行
     sync_manager = get_sync_manager(vector_store_handler)
@@ -356,8 +382,40 @@ async def on_chat_start():
     await persona_manager.initialize_default_personas()
     
     # Phase 7: ベクトルストアの初期化
-    cl.user_session.set("vector_stores", {})
     cl.user_session.set("uploaded_files", [])
+    
+    # ユーザー情報を取得
+    user = cl.user_session.get("user")
+    if user:
+        user_id = user.identifier
+        
+        # 1層目: .envから取得
+        company_vs_id = os.getenv("COMPANY_VECTOR_STORE_ID")
+        
+        # 2層目: データベースから取得（なければ新規作成）
+        data_layer_instance = cl_data._data_layer
+        personal_vs_id = None
+        
+        if data_layer_instance and hasattr(data_layer_instance, 'get_user_vector_store_id'):
+            personal_vs_id = await data_layer_instance.get_user_vector_store_id(user_id)
+            
+            if not personal_vs_id:
+                # 新規作成
+                new_vs_id = await vector_store_handler.create_vector_store(
+                    name=f"Personal VS for {user_id}"
+                )
+                if new_vs_id:
+                    await data_layer_instance.set_user_vector_store_id(user_id, new_vs_id)
+                    personal_vs_id = new_vs_id
+        
+        # セッションにベクトルストアIDを保存
+        cl.user_session.set("vector_store_ids", {
+            "company": company_vs_id,
+            "personal": personal_vs_id,
+            "session": None  # セッションVSはファイル添付時に作成
+        })
+    else:
+        cl.user_session.set("vector_store_ids", {})
     
     # モデルリストを動的に取得
     available_models = config_manager.get_available_models()
@@ -690,12 +748,38 @@ async def on_message(message: cl.Message):
             
             # ユーザーの応答を待つ
             if res and res.get("payload", {}).get("action") == "yes":
-                # ベクトルストアに追加
-                await add_files_to_knowledge_base(uploaded_file_ids)
-                await cl.Message(
-                    content="✅ ファイルをナレッジベースに追加しました。",
-                    author="System"
-                ).send()
+                # ベクトルストアIDを取得
+                vs_ids = cl.user_session.get("vector_store_ids", {})
+                session_vs_id = vs_ids.get("session")
+                thread_id = cl.user_session.get("thread_id") or cl.context.session.thread_id
+                
+                # セッション用ベクトルストアが未作成の場合は作成
+                if not session_vs_id:
+                    session_vs_id = await vector_store_handler.create_vector_store(
+                        name=f"Session VS for thread {thread_id[:8] if thread_id else 'unknown'}"
+                    )
+                    if session_vs_id:
+                        # データベースに保存
+                        data_layer_instance = cl_data._data_layer
+                        if data_layer_instance and hasattr(data_layer_instance, 'update_thread_vector_store'):
+                            await data_layer_instance.update_thread_vector_store(thread_id, session_vs_id)
+                        
+                        vs_ids["session"] = session_vs_id
+                        cl.user_session.set("vector_store_ids", vs_ids)
+                
+                # ファイルをベクトルストアに追加
+                if session_vs_id:
+                    success = await vector_store_handler.add_files_to_vector_store(session_vs_id, uploaded_file_ids)
+                    if success:
+                        await cl.Message(
+                            content=f"✅ {len(uploaded_file_ids)}個のファイルをナレッジベースに追加しました。",
+                            author="System"
+                        ).send()
+                    else:
+                        await cl.Message(
+                            content="❌ ファイルのベクトルストアへの追加に失敗しました。",
+                            author="System"
+                        ).send()
             else:
                 await cl.Message(
                     content="ℹ️ ファイルはアップロードされましたが、ナレッジベースには追加されませんでした。",

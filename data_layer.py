@@ -59,10 +59,17 @@ class SQLiteDataLayer(BaseDataLayer):
                 user_identifier TEXT,
                 tags TEXT,
                 metadata TEXT,
+                vector_store_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # 既存のテーブルにカラムを追加（既存のDBのため）
+        try:
+            cursor.execute("ALTER TABLE threads ADD COLUMN vector_store_id TEXT")
+        except sqlite3.OperationalError:
+            pass  # カラムが既に存在する場合はスキップ
         
         # ステップテーブル
         cursor.execute("""
@@ -91,6 +98,16 @@ class SQLiteDataLayer(BaseDataLayer):
                 value INTEGER,
                 comment TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # ユーザーベクトルストアテーブル（新規追加）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_vector_stores (
+                user_id TEXT PRIMARY KEY,
+                vector_store_id TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
@@ -197,6 +214,36 @@ class SQLiteDataLayer(BaseDataLayer):
                         raise
         return thread
     
+    async def delete_thread(self, thread_id: str) -> None:
+        """スレッドを削除（ベクトルストアも一緒に削除）"""
+        print(f"🔧 SQLite: delete_threadが呼ばれました - Thread ID: {thread_id}")
+        
+        # まずベクトルストアIDを取得
+        thread = await self.get_thread(thread_id)
+        if thread and thread.get("vector_store_id"):
+            vector_store_id = thread["vector_store_id"]
+            print(f"   🗑️ ベクトルストアを削除: {vector_store_id}")
+            
+            # OpenAI側のベクトルストアを削除
+            try:
+                from utils.vector_store_handler import vector_store_handler
+                await vector_store_handler.delete_vector_store(vector_store_id)
+                print(f"   ✅ ベクトルストア削除完了: {vector_store_id}")
+            except Exception as e:
+                print(f"   ⚠️ ベクトルストア削除失敗: {e}")
+                # エラーでも履歴削除は続行
+        
+        # データベースからスレッドを削除
+        async with aiosqlite.connect(self.db_path) as db:
+            # 関連するステップを削除
+            await db.execute("DELETE FROM steps WHERE thread_id = ?", (thread_id,))
+            # 関連するエレメントを削除
+            await db.execute("DELETE FROM elements WHERE thread_id = ?", (thread_id,))
+            # スレッド本体を削除
+            await db.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
+            await db.commit()
+            print(f"   ✅ スレッドと関連データを削除しました")
+    
     async def update_thread(
         self,
         thread_id: str,
@@ -204,6 +251,7 @@ class SQLiteDataLayer(BaseDataLayer):
         user_id: Optional[str] = None,
         metadata: Optional[Dict] = None,
         tags: Optional[List[str]] = None,
+        vector_store_id: Optional[str] = None,
     ) -> None:
         """スレッドを更新"""
         async with aiosqlite.connect(self.db_path) as db:
@@ -222,6 +270,9 @@ class SQLiteDataLayer(BaseDataLayer):
             if tags is not None:
                 updates.append("tags = ?")
                 values.append(json.dumps(tags))
+            if vector_store_id is not None:
+                updates.append("vector_store_id = ?")
+                values.append(vector_store_id)
             
             if updates:
                 updates.append("updated_at = CURRENT_TIMESTAMP")
@@ -276,6 +327,7 @@ class SQLiteDataLayer(BaseDataLayer):
                     "user_identifier": row["user_identifier"],
                     "tags": json.loads(row["tags"]) if row["tags"] else [],
                     "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+                    "vector_store_id": row["vector_store_id"],  # ベクトルストアIDを追加
                     "createdAt": row["created_at"],
                     "steps": steps  # ステップを含める
                 }
@@ -908,6 +960,49 @@ class SQLiteDataLayer(BaseDataLayer):
         """ペルソナを削除"""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("DELETE FROM personas WHERE id = ?", (persona_id,))
+            await db.commit()
+    
+    # =============== ユーザーベクトルストア関連のメソッド ===============
+    
+    async def get_user_vector_store_id(self, user_id: str) -> Optional[str]:
+        """ユーザーのベクトルストアIDを取得"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT vector_store_id FROM user_vector_stores WHERE user_id = ?",
+                (user_id,)
+            )
+            row = await cursor.fetchone()
+            return row["vector_store_id"] if row else None
+    
+    async def set_user_vector_store_id(self, user_id: str, vector_store_id: str) -> None:
+        """ユーザーのベクトルストアIDを設定"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # UPSERT操作（存在すれば更新、なければ挿入）
+            await db.execute("""
+                INSERT OR REPLACE INTO user_vector_stores 
+                (user_id, vector_store_id, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            """, (user_id, vector_store_id))
+            await db.commit()
+    
+    async def delete_user_vector_store(self, user_id: str) -> None:
+        """ユーザーのベクトルストア情報を削除"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "DELETE FROM user_vector_stores WHERE user_id = ?",
+                (user_id,)
+            )
+            await db.commit()
+    
+    async def update_thread_vector_store(self, thread_id: str, vector_store_id: str) -> None:
+        """スレッドのベクトルストアIDを更新"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                UPDATE threads 
+                SET vector_store_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (vector_store_id, thread_id))
             await db.commit()
 
 

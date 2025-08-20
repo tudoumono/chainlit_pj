@@ -32,6 +32,20 @@ OpenAI APIを活用したプロフェッショナル向けのAIチャットア�
 
 ## ⚠️ 重要な注意事項
 
+### OpenAI beta.vector_stores APIの廃止について
+
+**2025年8月20日現在、OpenAIの`beta.vector_stores` APIは廃止予定（deprecated）です。**
+
+- 参考: [GitHub Issue #2451](https://github.com/openai/openai-python/issues/2451)
+- 参考: [公式移行ガイド](https://platform.openai.com/docs/guides/migrate-to-responses)
+
+#### 対応状況
+- ✅ 現在のコードには**フォールバック処理が実装済み**
+- ✅ APIエラー時は自動的にローカルJSON管理に切り替わる
+- ✅ 完全ローカル管理版（`vector_store_handler_v2.py`）も作成済み
+
+詳細は[ベクトルストアAPI移行ガイド](docs/VECTOR_STORE_MIGRATION.md)を参照してください。
+
 ### Chainlit Action APIについて
 
 **ChainlitのAction APIでは、`payload`パラメータは必ず辞書型（dict）である必要があります。**

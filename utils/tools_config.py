@@ -29,6 +29,11 @@ class ToolsConfig:
         # デフォルト設定
         default_config = {
             "enabled": True,  # Tools機能全体の有効/無効
+            "vector_store_layers": {  # ベクトルストア層の有効/無効
+                "company": True,    # 1層目：会社全体
+                "personal": True,   # 2層目：個人ユーザー
+                "thread": True      # 3層目：チャット単位
+            },
             "tools": {
                 "web_search": {
                     "enabled": True,
@@ -248,10 +253,24 @@ class ToolsConfig:
         """設定を辞書として取得"""
         return self.config.copy()
     
-    def build_tools_parameter(self) -> Optional[List[Dict[str, Any]]]:
+    def is_layer_enabled(self, layer_name: str) -> bool:
+        """ベクトルストア層が有効かどうか"""
+        return self.config.get("vector_store_layers", {}).get(layer_name, True)
+    
+    def set_layer_enabled(self, layer_name: str, enabled: bool) -> None:
+        """ベクトルストア層の有効/無効を設定"""
+        if "vector_store_layers" not in self.config:
+            self.config["vector_store_layers"] = {}
+        self.config["vector_store_layers"][layer_name] = enabled
+        self._save_config()
+    
+    def build_tools_parameter(self, session=None) -> Optional[List[Dict[str, Any]]]:
         """
         OpenAI APIのtoolsパラメータを構築
         注: Responses APIではweb_search_previewタイプを使用
+        
+        Args:
+            session: Chainlitセッションオブジェクト（ベクトルストアID取得用）
         
         Returns:
             有効なツールのリスト（API用フォーマット）
@@ -270,15 +289,34 @@ class ToolsConfig:
         
         # ファイル検索ツール (file_searchタイプとして定義)
         if self.is_tool_enabled("file_search"):
-            # 設定からベクトルストアIDを取得
-            vector_store_ids = self.get_vector_store_ids()
+            vector_store_ids = []
+            
+            # 1層目：会社全体（.envから）
+            if self.is_layer_enabled("company"):
+                company_vs_id = os.getenv("COMPANY_VECTOR_STORE_ID")
+                if company_vs_id:
+                    vector_store_ids.append(company_vs_id)
+            
+            # 2層目：個人（セッションから）
+            if session and self.is_layer_enabled("personal"):
+                personal_vs_id = session.get("personal_vs_id")
+                if personal_vs_id:
+                    vector_store_ids.append(personal_vs_id)
+            
+            # 3層目：チャット（セッションから）
+            if session and self.is_layer_enabled("thread"):
+                thread_vs_id = session.get("thread_vs_id")
+                if thread_vs_id:
+                    vector_store_ids.append(thread_vs_id)
             
             # vector_store_idsが空の場合はfile_searchツールを追加しない
             # OpenAI APIは空のvector_store_idsを許可しないため
             if vector_store_ids:
                 file_search_config = {
                     "type": "file_search",
-                    "vector_store_ids": vector_store_ids  # 設定されたIDをそのまま使用
+                    "file_search": {
+                        "vector_store_ids": vector_store_ids
+                    }
                 }
                 tools.append(file_search_config)
             else:
