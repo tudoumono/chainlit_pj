@@ -185,7 +185,7 @@ class SQLiteDataLayer(BaseDataLayer):
             # 既にスレッドが存在するかチェック
             existing = await self.get_thread(thread.get("id"))
             if existing:
-                print(f"   ℹ️ スレッドは既に存在します: {thread.get('id')}")
+                # 既存スレッドを返す（通常の動作）
                 return existing
             
             async with aiosqlite.connect(self.db_path) as db:
@@ -207,7 +207,7 @@ class SQLiteDataLayer(BaseDataLayer):
                     print(f"   ✅ スレッドをSQLiteに保存しました")
                 except Exception as e:
                     if "UNIQUE constraint failed" in str(e):
-                        print(f"   ℹ️ スレッドは既に存在します（重複エラー）: {thread.get('id')}")
+                        # 重複エラーは正常・・・既存スレッドを返す
                         return await self.get_thread(thread.get("id"))
                     else:
                         print(f"   ❌ スレッド作成エラー: {e}")
@@ -333,8 +333,6 @@ class SQLiteDataLayer(BaseDataLayer):
                 }
                 print(f"   ✅ スレッドを取得しました: ステップ数={len(steps)}")
                 return thread_dict
-            else:
-                print(f"   ❌ スレッドが見つかりません: {thread_id}")
         return None
     
     async def delete_thread(self, thread_id: str) -> None:
@@ -532,7 +530,7 @@ class SQLiteDataLayer(BaseDataLayer):
             # スレッドが存在しない場合は作成
             existing_thread = await self.get_thread(thread_id)
             if not existing_thread:
-                print(f"   ⚠️ スレッドが存在しません。自動作成します: {thread_id}")
+                print(f"   ℹ️ 新規スレッドを自動作成: {thread_id}")
                 
                 # 現在のユーザー情報を取得
                 current_user = None

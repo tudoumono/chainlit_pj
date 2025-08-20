@@ -619,6 +619,9 @@ async def on_settings_update(settings):
     """
     app_logger.info(f"🌀 設定更新", settings=settings)
     
+    # 設定変更のメッセージを収集（一度に表示するため）
+    update_messages = []
+    
     # モデルの更新
     if "Model" in settings:
         model = settings["Model"]
@@ -626,37 +629,35 @@ async def on_settings_update(settings):
         current_settings["DEFAULT_MODEL"] = model
         cl.user_session.set("settings", current_settings)
         responses_handler.update_model(model)
-        await cl.Message(
-            content=f"✅ モデルを {model} に変更しました",
-            author="System"
-        ).send()
+        # メッセージは送信しない（履歴に残さない）
+        app_logger.info(f"モデル変更: {model}")
     
     # Tools機能全体の更新
     if "Tools_Enabled" in settings:
         if settings["Tools_Enabled"]:
             tools_config.update_enabled(True)
-            await cl.Message(content="✅ Tools機能を有効にしました", author="System").send()
+            app_logger.info("Tools機能を有効化")
         else:
             tools_config.update_enabled(False)
-            await cl.Message(content="❌ Tools機能を無効にしました", author="System").send()
+            app_logger.info("Tools機能を無効化")
     
     # Web検索の更新
     if "Web_Search" in settings:
         if settings["Web_Search"]:
             tools_config.update_tool_status("web_search", True)
-            await cl.Message(content="✅ Web検索を有効にしました", author="System").send()
+            app_logger.info("Web検索を有効化")
         else:
             tools_config.update_tool_status("web_search", False)
-            await cl.Message(content="❌ Web検索を無効にしました", author="System").send()
+            app_logger.info("Web検索を無効化")
     
     # ファイル検索の更新
     if "File_Search" in settings:
         if settings["File_Search"]:
             tools_config.update_tool_status("file_search", True)
-            await cl.Message(content="✅ ファイル検索を有効にしました", author="System").send()
+            app_logger.info("ファイル検索を有効化")
         else:
             tools_config.update_tool_status("file_search", False)
-            await cl.Message(content="❌ ファイル検索を無効にしました", author="System").send()
+            app_logger.info("ファイル検索を無効化")
     
     # ベクトルストア3層の設定更新
     
@@ -664,44 +665,50 @@ async def on_settings_update(settings):
     if "VS_Layer_Company" in settings:
         tools_config.set_layer_enabled("company", settings["VS_Layer_Company"])
         status = "有効" if settings["VS_Layer_Company"] else "無効"
-        await cl.Message(content=f"✅ 会社全体ベクトルストアを{status}にしました", author="System").send()
+        app_logger.info(f"会社全体ベクトルストア: {status}")
     
     if "VS_ID_Company" in settings:
-        company_id = settings["VS_ID_Company"].strip()
-        if company_id:
-            # .envファイルを更新
-            config_manager.update_env_value("COMPANY_VECTOR_STORE_ID", company_id)
-            os.environ["COMPANY_VECTOR_STORE_ID"] = company_id
-            await cl.Message(content=f"✅ 会社全体ベクトルストアIDを設定: {company_id}", author="System").send()
+        # None チェックを追加
+        company_id_value = settings["VS_ID_Company"]
+        if company_id_value is not None:
+            company_id = company_id_value.strip()
+            if company_id:
+                # .envファイルを更新
+                config_manager.update_env_value("COMPANY_VECTOR_STORE_ID", company_id)
+                os.environ["COMPANY_VECTOR_STORE_ID"] = company_id
+                app_logger.info(f"会社全体ベクトルストアID設定: {company_id}")
     
     # 2層目: 個人ユーザー
     if "VS_Layer_Personal" in settings:
         tools_config.set_layer_enabled("personal", settings["VS_Layer_Personal"])
         status = "有効" if settings["VS_Layer_Personal"] else "無効"
-        await cl.Message(content=f"✅ 個人ベクトルストアを{status}にしました", author="System").send()
+        app_logger.info(f"個人ベクトルストア: {status}")
     
     if "VS_ID_Personal" in settings:
-        personal_id = settings["VS_ID_Personal"].strip()
-        if personal_id:
-            # セッションに保存
-            vs_ids = cl.user_session.get("vector_store_ids", {})
-            vs_ids["personal"] = personal_id
-            cl.user_session.set("vector_store_ids", vs_ids)
-            
-            # データベースにも保存
-            user = cl.user_session.get("user")
-            if user:
-                data_layer_instance = cl_data._data_layer
-                if data_layer_instance and hasattr(data_layer_instance, 'set_user_vector_store_id'):
-                    await data_layer_instance.set_user_vector_store_id(user.identifier, personal_id)
-            
-            await cl.Message(content=f"✅ 個人ベクトルストアIDを設定: {personal_id}", author="System").send()
+        # None チェックを追加
+        personal_id_value = settings["VS_ID_Personal"]
+        if personal_id_value is not None:
+            personal_id = personal_id_value.strip()
+            if personal_id:
+                # セッションに保存
+                vs_ids = cl.user_session.get("vector_store_ids", {})
+                vs_ids["personal"] = personal_id
+                cl.user_session.set("vector_store_ids", vs_ids)
+                
+                # データベースにも保存
+                user = cl.user_session.get("user")
+                if user:
+                    data_layer_instance = cl_data._data_layer
+                    if data_layer_instance and hasattr(data_layer_instance, 'set_user_vector_store_id'):
+                        await data_layer_instance.set_user_vector_store_id(user.identifier, personal_id)
+                
+                app_logger.info(f"個人ベクトルストアID設定: {personal_id}")
     
     # 3層目: チャット単位
     if "VS_Layer_Thread" in settings:
         tools_config.set_layer_enabled("thread", settings["VS_Layer_Thread"])
         status = "有効" if settings["VS_Layer_Thread"] else "無効"
-        await cl.Message(content=f"✅ チャット単位ベクトルストアを{status}にしました（ファイルアップロード時に自動作成）", author="System").send()
+        app_logger.info(f"チャット単位ベクトルストア: {status}")
     
     # プロキシ設定の更新
     if "Proxy_Enabled" in settings or "Proxy_URL" in settings:
@@ -719,17 +726,11 @@ async def on_settings_update(settings):
         if proxy_enabled and proxy_url:
             os.environ["HTTPS_PROXY"] = proxy_url
             os.environ["HTTP_PROXY"] = proxy_url
-            await cl.Message(
-                content=f"✅ プロキシを有効にしました: {proxy_url}",
-                author="System"
-            ).send()
+            app_logger.info(f"プロキシ有効化: {proxy_url}")
         else:
             os.environ.pop("HTTPS_PROXY", None)
             os.environ.pop("HTTP_PROXY", None)
-            await cl.Message(
-                content="❌ プロキシを無効にしました",
-                author="System"
-            ).send()
+            app_logger.info("プロキシ無効化")
     
     # Temperatureの更新
     if "Temperature" in settings:
@@ -739,25 +740,16 @@ async def on_settings_update(settings):
         if active_persona:
             active_persona["temperature"] = temperature
             cl.user_session.set("active_persona", active_persona)
-        await cl.Message(
-            content=f"🌡️ Temperatureを {temperature} に変更しました",
-            author="System"
-        ).send()
+        app_logger.info(f"Temperature変更: {temperature}")
     
     # システムプロンプトの更新
     if "System_Prompt" in settings:
         system_prompt = settings["System_Prompt"]
         cl.user_session.set("system_prompt", system_prompt)
         if system_prompt:
-            await cl.Message(
-                content=f"✅ システムプロンプトを設定しました:\n```\n{system_prompt[:200]}...\n```",
-                author="System"
-            ).send()
+            app_logger.info(f"システムプロンプト設定: {len(system_prompt)}文字")
         else:
-            await cl.Message(
-                content="✅ システムプロンプトをクリアしました",
-                author="System"
-            ).send()
+            app_logger.info("システムプロンプトクリア")
 
 
 @cl.on_message
