@@ -288,17 +288,29 @@ class ConfigManager:
             )
             
             # テストメッセージを送信
-            response = await asyncio.to_thread(
-                client.chat.completions.create,
-                model=os.getenv("DEFAULT_MODEL", "gpt-4o-mini"),
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": "Say 'Hello, World!' in Japanese."}
-                ],
-                max_tokens=50
-            )
-            
-            result = response.choices[0].message.content
+            # Responses APIを优先、失敗時はChat Completions APIにフォールバック
+            try:
+                # Responses APIを試す
+                response = await asyncio.to_thread(
+                    client.responses.create,
+                    model=os.getenv("DEFAULT_MODEL", "gpt-4o-mini"),
+                    input="Say 'Hello, World!' in Japanese.",
+                    instructions="You are a helpful assistant.",
+                    max_tokens=50
+                )
+                result = response.output_text if hasattr(response, 'output_text') else str(response)
+            except (AttributeError, Exception) as e:
+                # Chat Completions APIにフォールバック
+                response = await asyncio.to_thread(
+                    client.chat.completions.create,
+                    model=os.getenv("DEFAULT_MODEL", "gpt-4o-mini"),
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": "Say 'Hello, World!' in Japanese."}
+                    ],
+                    max_tokens=50
+                )
+                result = response.choices[0].message.content
             return True, f"テスト成功！レスポンス: {result}"
             
         except Exception as e:

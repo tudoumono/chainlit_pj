@@ -147,8 +147,8 @@ class ResponsesAPIHandler:
         正しい実装パターンです。
         
         参照:
-        - openai responseAPI reference (Text generation).md
-        - openai responseAPI reference (Conversation state).md
+        - https://platform.openai.com/docs/api-reference/responses
+        - https://platform.openai.com/docs/quickstart?api-mode=responses
         
         Args:
             messages: メッセージ履歴
@@ -158,7 +158,7 @@ class ResponsesAPIHandler:
             stream: ストリーミング有効/無効
             use_tools: Tools機能を使用するか
             tool_choice: ツール選択設定
-            previous_response_id: 前の応答ID（会話継続用）
+            session: Chainlitセッション情報
             **kwargs: その他のパラメータ
         
         Yields:
@@ -190,7 +190,6 @@ class ResponsesAPIHandler:
                 break
         
         # Responses APIパラメータを構築
-        # 参照: openai responseAPI reference (Text generation).md
         response_params = {
             "model": model,
             "temperature": temperature,
@@ -217,7 +216,6 @@ class ResponsesAPIHandler:
                 break
         
         # 会話継続用のresponse_id
-        # 参照: openai responseAPI reference (Conversation state).md
         if previous_response_id:
             response_params["previous_response_id"] = previous_response_id
         
@@ -245,9 +243,6 @@ class ResponsesAPIHandler:
             # 重要: OpenAI SDKはResponses APIを正式にサポートしています
             # 参照: https://platform.openai.com/docs/api-reference/responses
             # ========================================================
-            # SDKドキュメント: client.responses.create()メソッドが正式に提供されています
-            # もしAttributeErrorが発生する場合は、SDKのバージョンやインストール状況の問題であり、
-            # SDKがResponses APIをサポートしていないという意味ではありません
             try:
                 app_logger.debug("🔧 Responses API呼び出しを試行中...")
                 response = await self.async_client.responses.create(**response_params)
@@ -269,8 +264,6 @@ class ResponsesAPIHandler:
                 # Responses APIが利用できない場合、Chat Completions APIにフォールバック
                 # 注意: これはSDKのバージョンやインストール状況によるものです
                 # OpenAI SDKは正式にResponses APIをサポートしています
-                # 参照: openai responseAPI reference ドキュメント群
-                # 将来的にはResponses APIが標準となる予定です
                 # ========================================================
                 chat_params = {
                     "model": model,
@@ -422,10 +415,10 @@ class ResponsesAPIHandler:
         
         return chunk_dict
     
+    
     def _process_response_output(self, response) -> Dict[str, Any]:
         """
         Responses APIの非ストリーミング応答を処理
-        参照: openai responseAPI reference (Text generation).md
         """
         return {
             "id": response.id if hasattr(response, 'id') else None,
@@ -440,7 +433,6 @@ class ResponsesAPIHandler:
     def _process_response_stream_event(self, event) -> Dict[str, Any]:
         """
         Responses APIのストリーミングイベントを処理
-        参照: openai responseAPI reference (Streaming API responses).md
         
         イベントタイプ:
         - response.output_text.delta: テキストのデルタ
@@ -751,8 +743,7 @@ class ResponsesAPIHandler:
         system_prompt: str = None
     ) -> List[Dict[str, str]]:
         """
-        メッセージ履歴をAPI用にフォーマット
-        参照: openai responseAPI reference (Conversation state).md
+        メッセージ履歴をChat Completions API用にフォーマット
         
         Args:
             messages: データベースから取得したメッセージ
@@ -828,15 +819,28 @@ class ResponsesAPIHandler:
             ]
             
             # ツールを使わずにタイトル生成
-            response = await self.async_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=title_prompt,
-                temperature=0.5,
-                max_tokens=30,
-                stream=False
-            )
-            
-            title = response.choices[0].message.content.strip()
+            # Responses APIを优先的に使用、失敗時はChat Completions APIにフォールバック
+            try:
+                # Responses APIを試す
+                response = await self.async_client.responses.create(
+                    model="gpt-4o-mini",
+                    input="以下の会話から、短く簡潔なタイトルを日本語で生成してください。20文字以内で。",
+                    instructions="\n".join([f"{m['role']}: {m['content']}" for m in messages[:3]]),
+                    temperature=0.5,
+                    max_tokens=30,
+                    stream=False
+                )
+                title = response.output_text.strip() if hasattr(response, 'output_text') else response.output.strip()
+            except (AttributeError, Exception) as e:
+                # Chat Completions APIにフォールバック
+                response = await self.async_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=title_prompt,
+                    temperature=0.5,
+                    max_tokens=30,
+                    stream=False
+                )
+                title = response.choices[0].message.content.strip()
             # タイトルが長すぎる場合は切り詰め
             if len(title) > 30:
                 title = title[:27] + "..."
