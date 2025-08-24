@@ -135,33 +135,6 @@ response = client.responses.create(...)  # ✅ Responses API必須
 ---
 
 ## **2. アーキテクチャ**
-
-### 2.1 現在のファイル構成
-
-```
-F:\10_code\AI_Workspace_App_Chainlit\
-├── app.py                          # メインアプリケーション（2000行超、要分割）
-├── auth.py                         # 認証設定
-├── data_layer.py                   # SQLiteデータレイヤー
-├── utils/
-│   ├── config.py                   # 設定管理
-│   ├── responses_handler.py        # Chat Completions API呼び出し
-│   ├── tools_config.py             # ツール設定管理
-│   ├── persona_manager.py          # ペルソナ管理
-│   ├── vector_store_handler.py     # ベクトルストア管理（統一版）
-│   ├── auto_vector_store_manager.py    # 自動VS管理
-│   ├── secure_vector_store_manager.py  # セキュアVS管理
-│   ├── vector_store_gui_manager.py     # GUI管理
-│   ├── integrated_vs_commands.py   # 統合VSコマンド
-│   ├── logger.py                   # ログシステム
-│   └── connection_handler.py       # WebSocket管理
-├── .chainlit/                      # Chainlit設定とDB
-│   ├── chainlit.db                 # SQLite履歴DB
-│   └── tools_config.json           # ツール設定
-├── openai_responseAPI_reference/   # APIリファレンス
-└── docs/                          # ドキュメント
-```
-
 ### 2.2 推奨アーキテクチャ（リファクタリング後）
 
 ```
