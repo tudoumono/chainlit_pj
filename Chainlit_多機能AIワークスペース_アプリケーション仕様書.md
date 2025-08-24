@@ -1,52 +1,100 @@
 # **多機能AIワークスペース アプリケーション仕様書（更新版）**
 
-バージョン: 1.2  
+バージョン: 1.3  
 更新日: 2025年8月24日  
 初版作成日: 2025年8月6日  
-概要: OpenAIの最新Tools API（旧称Responses API）を活用した、プロフェッショナル向けのChainlitベースAIアプリケーションの技術仕様
+概要: OpenAIの最新Responses APIを活用した、プロフェッショナル向けのChainlitベースAIアプリケーションの技術仕様
 
 ---
 
-## **重要：OpenAI APIの名称と実装について**
+## **🎯 最重要：OpenAI Responses APIの実装について**
 
-### ⚠️ **用語の明確化（混乱防止のため）**
+### ✨ **Responses API - 新世代のAIエージェント構築API**
 
-OpenAIは2024年12月に新しいツール機能を発表しましたが、**名称と実装に関して混乱が生じやすい**ため、以下を明確にします：
+OpenAIは2024年12月に革新的な**Responses API**を正式発表しました。これは**Chat Completions APIのシンプルさとAssistant APIのツール使用機能を統合**した、全く新しいAPIです。
 
-| 用語 | 正式名称 | 実装方法 | 状態 |
-|------|---------|----------|------|
-| **Responses API** | マーケティング用語 | Chat Completions APIのツール機能として実装 | ✅ **正式サポート** |
-| **Tools（ツール）** | 正式なAPI機能名 | `tools`パラメータで指定 | ✅ **利用可能** |
-| **File Search** | ファイル検索ツール | `type: "file_search"`として指定 | ✅ **利用可能** |
-| **Web Search** | Web検索ツール | 将来的に提供予定 | ⚠️ **未実装** |
-| **Code Interpreter** | コード実行ツール | `type: "code_interpreter"`として指定 | ✅ **利用可能** |
+### 📌 **公式リファレンス**
+- [OpenAI Quickstart - Responses API](https://platform.openai.com/docs/quickstart?api-mode=responses)
+- [新しいエージェント構築ツールの発表（日本語）](https://openai.com/ja-JP/index/new-tools-for-building-agents/)
+- [Web Search and States with Responses API Cookbook](https://cookbook.openai.com/examples/responses_api/responses_example)
 
-### 📌 **実装上の重要事項**
+### 🚀 **Responses APIの特徴**
+
+| 機能 | 説明 | 実装状態 |
+|------|------|----------|
+| **ステートフルな会話** | 会話状態を自動管理 | ✅ **利用可能** |
+| **Web Search** | ウェブ検索機能内蔵 | ✅ **利用可能** |
+| **File Search** | ファイル検索機能 | ✅ **利用可能** |
+| **Code Interpreter** | コード実行機能 | ✅ **利用可能** |
+| **Custom Tools** | カスタムツール定義 | ✅ **利用可能** |
+
+### 📝 **実装方法（公式ドキュメント準拠）**
 
 ```python
-# ❌ 誤解を招く実装（存在しないメソッド）
-response = client.responses.create(...)  # このメソッドは存在しません
+# ✅ 正しい実装：Responses APIの使用
+from openai import OpenAI
+client = OpenAI()
 
-# ✅ 正しい実装（Chat Completions APIのツール機能）
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=messages,
+# Responses APIを使用した実装例
+response = client.responses.create(
+    model="gpt-5",  # または "gpt-4o-mini", "gpt-4o" など
+    input="Write a one-sentence bedtime story about a unicorn.",
+    # ツールの設定も可能
     tools=[
+        {
+            "type": "web_search",
+            "enabled": True
+        },
         {
             "type": "file_search",
             "file_search": {
-                "vector_store_ids": ["vs_xxx", "vs_yyy"]
+                "vector_store_ids": ["vs_xxx"]
             }
         }
     ]
 )
+
+print(response.output_text)
 ```
 
-**結論：「Responses API」という独立したAPIエンドポイントは存在しません。Chat Completions APIのツール機能として正式にサポートされています。**
+### ⚠️ **重要な変更点**
 
-参照：
-- [OpenAI公式発表（日本語）](https://openai.com/ja-JP/index/new-tools-for-building-agents/)
-- [File Search公式ドキュメント](https://platform.openai.com/docs/guides/tools-file-search)
+以前の誤った記載：
+- ❌ 「client.responses.create()は存在しない」
+- ❌ 「Responses APIは独立したAPIではない」
+- ❌ 「Chat Completions APIのツール機能として実装」
+
+**正しい理解：**
+- ✅ **Responses APIは独立した新しいAPI**
+- ✅ **client.responses.create()メソッドが正式に存在**
+- ✅ **本プロジェクトの中核となる最重要API**
+
+### 🚫 **実装上の厳格なルール**
+
+#### ❌ **使用禁止**
+```python
+# 絶対に使用してはいけない実装
+response = client.chat.completions.create(...)  # ❌ 使用禁止
+```
+
+#### ✅ **必須実装**
+```python
+# 必ず使用すべき実装
+response = client.responses.create(...)  # ✅ Responses API必須
+```
+
+**理由：**
+- Responses APIは新世代のエージェント構築に特化
+- Web Search機能がネイティブで統合
+- ステートフル会話管理が標準装備
+- Chat Completions APIは旧世代のAPIであり、本プロジェクトでは一切使用しない
+
+### 🔗 **必須参照ドキュメント**
+- [Responses API Quickstart](https://platform.openai.com/docs/quickstart?api-mode=responses)
+- [OpenAI公式発表 - 新しいエージェント構築ツール](https://openai.com/ja-JP/index/new-tools-for-building-agents/)
+- [Responses API Cookbook Example](https://cookbook.openai.com/examples/responses_api/responses_example)
+- [Web Search Integration Guide](https://platform.openai.com/docs/guides/web-search)
+- [File Search with Responses API](https://platform.openai.com/docs/guides/file-search)
 
 ---
 
@@ -57,15 +105,16 @@ response = client.chat.completions.create(
 本アプリケーションは、Chainlitフレームワークを基盤とした多機能AIワークスペースです。当初の設計から進化し、現在は以下の構成で動作しています：
 
 - **フレームワーク**: Chainlit 2.6.8以上
-- **AI API**: OpenAI Chat Completions API with Tools
+- **AI API**: OpenAI Responses API（**Chat Completions APIは使用禁止**）
 - **データベース**: SQLite3（永続化）
 - **認証**: Chainlit内蔵認証（credentials）
 
-### 1.2 実装済み機能（Phase 1-7）
+### 1.2 実装状況（Responses API移行前）
 
 | Phase | 機能 | 状態 | 説明 |
 |-------|------|------|------|
 | 1 | 基本環境構築 | ✅ 完了 | Chainlit起動、ウェルカム画面 |
+| **新** | **Responses API統合** | **🔴 最優先** | **Chat Completions API使用禁止、Responses API必須** |
 | 2 | 設定管理 | ✅ 完了 | APIキー管理、接続テスト |
 | 3 | データベース基盤 | ✅ 完了 | SQLite3による履歴永続化 |
 | 4 | 基本チャット | ✅ 完了 | ストリーミング応答、エラーハンドリング |
@@ -136,14 +185,23 @@ F:\10_code\AI_Workspace_App_Chainlit\
 #### API呼び出し方法
 
 ```python
-# utils/responses_handler.py での実装
-async def create_response(self, messages, model, **kwargs):
+# utils/responses_handler.py での実装（Responses API対応版）
+async def create_response(self, input_text, model, **kwargs):
     """
-    Chat Completions APIのツール機能を使用
-    注意：「Responses API」という名前だが、実際はChat Completions API
+    OpenAI Responses APIを使用した実装
+    公式ドキュメント: https://platform.openai.com/docs/quickstart?api-mode=responses
     """
     # ツール設定
     tools = []
+    
+    # Web検索機能（Responses API内蔵）
+    if self.tools_config.is_tool_enabled("web_search"):
+        tools.append({
+            "type": "web_search",
+            "enabled": True
+        })
+    
+    # ファイル検索機能
     if self.tools_config.is_tool_enabled("file_search"):
         tools.append({
             "type": "file_search",
@@ -152,12 +210,12 @@ async def create_response(self, messages, model, **kwargs):
             }
         })
     
-    # Chat Completions APIを呼び出し
-    response = await self.async_client.chat.completions.create(
+    # Responses APIを呼び出し（新しいメソッド）
+    response = await self.async_client.responses.create(
         model=model,
-        messages=messages,
+        input=input_text,
         tools=tools if tools else None,
-        stream=True
+        stream=True  # ストリーミング対応
     )
     
     # ストリーミング処理
@@ -224,6 +282,7 @@ advanced_settings = [
 
 | 課題 | 現状 | 対策 | 優先度 |
 |------|------|------|--------|
+| **Responses API未実装** | **Chat Completions使用中（禁止）** | **即座に完全移行必須** | **🔴 最高** |
 | app.py肥大化 | 2000行超 | モジュール分割 | 🔴 高 |
 | VS関連ファイル重複 | 11個のファイル | 統一版に一本化 | 🔴 高 |
 | エラーハンドリング | 不統一 | 共通エラーハンドラー | 🔴 高 |
@@ -249,6 +308,25 @@ advanced_settings = [
 ## **5. 開発ガイドライン**
 
 ### 5.1 コーディング規約
+
+#### 🚫 **API使用に関する絶対的ルール**
+
+```python
+# ❌❌❌ 絶対禁止：Chat Completions APIの使用
+def create_chat_response():
+    # 以下のコードは絶対に書いてはいけない
+    response = client.chat.completions.create(...)  # ❌ 使用禁止
+    
+# ✅✅✅ 必須：Responses APIの使用
+def create_response():
+    # 必ずResponses APIを使用する
+    response = client.responses.create(...)  # ✅ 必須
+```
+
+**違反時の対応：**
+- コードレビューで即座に差し戻し
+- Chat Completions APIを使用したコードは一切マージしない
+- 既存コードも発見次第、Responses APIに書き換える
 
 ```python
 # ✅ 良い例：明確な関数名と型ヒント
@@ -373,7 +451,12 @@ docs/
 
 ## **8. 今後のロードマップ**
 
-### Phase 1: 技術的負債の解消（2025年8月）
+### Phase 0: Responses API移行（2025年8月 - 最優先）
+- [ ] **Responses APIへの完全移行**
+- [ ] **Web Search機能の実装**
+- [ ] **ステートフル会話管理の実装**
+
+### Phase 1: 技術的負債の解消（2025年9月）
 - [ ] app.pyのモジュール分割
 - [ ] ベクトルストア関連コードの統一
 - [ ] エラーハンドリングの標準化
@@ -392,15 +475,16 @@ docs/
 
 ## **付録A: API名称の混乱防止ガイド**
 
-### ❌ 避けるべき表現
-- 「Responses APIを使用しています」
-- 「client.responses.create()メソッド」
-- 「Responses APIが利用できない」
+### ❌ 過去の誤った理解
+- 「Responses APIは存在しない」
+- 「Chat Completions APIのツール機能で代替」
+- 「client.responses.create()は使えない」
 
-### ✅ 正しい表現
-- 「Chat Completions APIのツール機能を使用しています」
-- 「client.chat.completions.createメソッドでツールを指定」
-- 「OpenAIの新しいツール機能（2024年12月発表）を活用」
+### ✅ 正しい理解と実装
+- **「Responses APIは2024年12月に正式発表された新しいAPI」**
+- **「client.responses.create()メソッドが正式に利用可能」**
+- **「Web Search機能がネイティブで利用可能」**
+- **「本プロジェクトの中核技術として採用」**
 
 ### 📚 公式リファレンス
 - [OpenAI Tools Documentation](https://platform.openai.com/docs/guides/tools)
