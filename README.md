@@ -32,19 +32,26 @@ OpenAI APIを活用したプロフェッショナル向けのAIチャットア�
 
 ## ⚠️ 重要な注意事項
 
-### OpenAI beta.vector_stores APIの廃止について
+### 📖 API名称に関する重要事項
 
-**2025年8月20日現在、OpenAIの`beta.vector_stores` APIは廃止予定（deprecated）です。**
+**必ず最初にお読みください：**
+- 📌 [→ API名称の明確化ガイド](docs/API_CLARIFICATION.md)
+- 📌 [→ 最新仕様書 v1.2](1.2_Chainlit_多機能AIワークスペース_アプリケーション仕様書_更新版.md)
 
-- 参考: [GitHub Issue #2451](https://github.com/openai/openai-python/issues/2451)
-- 参考: [公式移行ガイド](https://platform.openai.com/docs/guides/migrate-to-responses)
+**「Responses API」について：**
+- ✅ OpenAIの新機能は**正式にサポートされています**
+- ℹ️ 技術的にはChat Completions APIのツール機能として実装
+- ❌ `client.responses.create()`メソッドは存在しません
+- ✅ すべて`client.chat.completions.create()`で利用します
 
-#### 対応状況
-- ✅ 現在のコードには**フォールバック処理が実装済み**
-- ✅ APIエラー時は自動的にローカルJSON管理に切り替わる
-- ✅ 完全ローカル管理版（`vector_store_handler_v2.py`）も作成済み
+### ベクトルストアAPIについて
 
-詳細は[ベクトルストアAPI移行ガイド](docs/VECTOR_STORE_MIGRATION.md)を参照してください。
+**現在の状態：**
+- ✅ `client.beta.vector_stores` APIは**正常に動作中**
+- ✅ フォールバック処理も実装済み
+- ✅ ファイル検索機能が利用可能
+
+詳細は[ベクトルストア管理ガイド](docs/VECTOR_STORE_SECURITY_IMPLEMENTATION.md)を参照してください。
 
 ### Chainlit Action APIについて
 

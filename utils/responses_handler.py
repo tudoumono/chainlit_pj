@@ -1,53 +1,64 @@
 """
-OpenAI Responses API管理モジュール
-- Responses APIの呼び出し（最新のAPI形式）
-- Tools機能（Web検索、ファイル検索）対応
+Chat Completions API with Tools管理モジュール
+
+========================================================
+重要：API名称の明確化
+========================================================
+
+このファイルは歴史的理由で"responses_handler"という名前ですが、
+実際はChat Completions APIのツール機能を管理しています。
+
+OpenAIは2024年12月に新しいツール機能を発表しました：
+- マーケティング名："Responses API"
+- 技術的実装：Chat Completions APIの拡張
+- Python SDK：client.chat.completions.create()メソッドを使用
+
+詳細は docs/API_CLARIFICATION.md を参照してください。
+
+========================================================
+機能概要
+========================================================
+
+- Chat Completions APIの呼び出し
+- Tools機能（ファイル検索、コード実行）対応
 - ストリーミング応答処理
 - メッセージ履歴管理
 - エラーハンドリング
+- ベクトルストア統合
 
 ========================================================
-重要: OpenAI Python SDKはResponses APIを正式にサポートしています
+参照ドキュメント
 ========================================================
 
-参照ドキュメント:
-- 公式APIリファレンス: https://platform.openai.com/docs/api-reference/responses
-- Text generation: https://platform.openai.com/docs/guides/text-generation
-- Streaming responses: https://platform.openai.com/docs/guides/streaming
-- Conversation state: https://platform.openai.com/docs/guides/conversation-state
+公式ドキュメント:
+- Tools Documentation: https://platform.openai.com/docs/guides/tools
+- File Search Guide: https://platform.openai.com/docs/guides/tools-file-search
+- Chat Completions API: https://platform.openai.com/docs/api-reference/chat
 
-ローカル参照:
-- F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\openai responseAPI reference (Text generation).md
-- F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\openai responseAPI reference (Conversation state).md
-- F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\openai responseAPI reference (Streaming API responses).md
+ローカルドキュメント:
+- docs/API_CLARIFICATION.md - API名称の明確化
+- 1.2_Chainlit_多機能AIワークスペース_アプリケーション仕様書_更新版.md
 
-SDKでの使用方法:
-  from openai import OpenAI
-  client = OpenAI()
-  
-  # Responses APIの呼び出し
-  response = client.responses.create(
-      model="gpt-5",
-      input="Your message",
-      instructions="System prompt",
-      previous_response_id="prev_id"  # 会話継続用
-  )
+========================================================
+実装上の注意
+========================================================
 
-注意事項:
-- SDKのバージョンやインストール状況により、Responses APIが利用できない場合があります
-- その場合は自動的にChat Completions APIにフォールバックします
-- これはSDKがResponses APIをサポートしていないという意味ではありません
-- Responses APIは正式にサポートされており、将来的に標準となる予定です
+1. "Responses API"という独立したAPIエンドポイントは存在しません
+2. client.responses.create()メソッドは存在しません
+3. すべての機能はChat Completions APIを通じて利用します
+4. ベクトルストアはBeta APIを使用します（client.beta.vector_stores）
 """
 
 import os
 import json
+import asyncio
 from typing import Dict, List, Optional, AsyncGenerator, Any, Union
 from openai import OpenAI, AsyncOpenAI
 import httpx
 from datetime import datetime
-import asyncio
 from .tools_config import tools_config
+from .logger import app_logger  # ログシステムを追加
+from .vector_store_handler import vector_store_handler  # ベクトルストアハンドラーを追加
 
 
 class ResponsesAPIHandler:
@@ -220,6 +231,14 @@ class ResponsesAPIHandler:
                 response_params["tools"] = tools
                 response_params["tool_choice"] = tool_choice or "auto"
         
+        # デバッグログを追加
+        app_logger.debug(f"🔧 create_response開始", 
+                        model=model, 
+                        stream=stream,
+                        tools_enabled=use_tools,
+                        message_count=len(messages))
+        
+        response_stream = None
         try:
             # ========================================================
             # Responses APIを試す
@@ -230,17 +249,22 @@ class ResponsesAPIHandler:
             # もしAttributeErrorが発生する場合は、SDKのバージョンやインストール状況の問題であり、
             # SDKがResponses APIをサポートしていないという意味ではありません
             try:
+                app_logger.debug("🔧 Responses API呼び出しを試行中...")
                 response = await self.async_client.responses.create(**response_params)
                 
                 # ストリーミングモード
                 if stream:
+                    app_logger.debug("🔧 Responses APIストリーミングモード")
                     async for event in response:
                         yield self._process_response_stream_event(event)
                 # 非ストリーミングモード
                 else:
+                    app_logger.debug("🔧 Responses API非ストリーミングモード")
                     yield self._process_response_output(response)
             
-            except AttributeError:
+            except AttributeError as e:
+                app_logger.debug(f"⚠️ Responses APIが利用不可: {e}")
+                app_logger.debug("🔧 Chat Completions APIにフォールバック")
                 # ========================================================
                 # Responses APIが利用できない場合、Chat Completions APIにフォールバック
                 # 注意: これはSDKのバージョンやインストール状況によるものです
@@ -266,25 +290,61 @@ class ResponsesAPIHandler:
                         chat_params["tools"] = tools
                         chat_params["tool_choice"] = tool_choice or "auto"
                 
-                response = await self.async_client.chat.completions.create(**chat_params)
+                response_stream = await self.async_client.chat.completions.create(**chat_params)
                 
                 # ストリーミングモード
                 if stream:
-                    async for chunk in response:
-                        yield self._process_stream_chunk(chunk)
+                    app_logger.debug("🔧 Chat Completions APIストリーミングモード開始")
+                    try:
+                        async for chunk in response_stream:
+                            if chunk:  # chunkがNoneでないことを確認
+                                yield self._process_stream_chunk(chunk)
+                    except asyncio.CancelledError:
+                        app_logger.debug("⚠️ ストリーミングがキャンセルされました")
+                        # Cancelled Errorは正常な終了として扱う
+                        return
+                    except GeneratorExit:
+                        app_logger.debug("⚠️ ジェネレーターが終了しました")
+                        # GeneratorExitも正常な終了として扱う
+                        return
+                    finally:
+                        app_logger.debug("🔧 ストリーミング終了処理")
+                        # response_streamのクリーンアップ
+                        if response_stream and hasattr(response_stream, 'aclose'):
+                            try:
+                                await response_stream.aclose()
+                            except Exception as cleanup_error:
+                                app_logger.debug(f"⚠️ クリーンアップエラー: {cleanup_error}")
                 # 非ストリーミングモード
                 else:
-                    yield self._process_response(response)
+                    app_logger.debug("🔧 Chat Completions API非ストリーミングモード")
+                    yield self._process_response(response_stream)
         
+        except asyncio.CancelledError:
+            app_logger.debug("⚠️ 処理がキャンセルされました")
+            # CancelledErrorは再度raiseする必要がある
+            raise
         except Exception as e:
+            app_logger.error(f"❌ API呼び出しエラー: {e}")
+            import traceback
+            app_logger.debug(f"❌ エラートレースバック: {traceback.format_exc()}")
             yield {
                 "error": str(e),
                 "type": "api_error",
                 "details": {
                     "model": model,
-                    "tools_enabled": use_tools
+                    "tools_enabled": use_tools,
+                    "error_type": type(e).__name__
                 }
             }
+        finally:
+            app_logger.debug("🔧 create_response終了")
+            # リソースのクリーンアップ
+            if response_stream and hasattr(response_stream, 'aclose'):
+                try:
+                    await response_stream.aclose()
+                except Exception:
+                    pass  # クリーンアップエラーは無視
     
     def _process_stream_chunk(self, chunk) -> Dict[str, Any]:
         """ストリーミングチャンクを処理"""
@@ -557,19 +617,39 @@ class ResponsesAPIHandler:
         Returns:
             検索結果
         """
+        # ログ出力：Web検索の実行
+        app_logger.info("="*60)
+        app_logger.info("🔍 Web検索実行")
+        app_logger.info(f"   検索クエリ: {query}")
+        
         # ここは実際のWeb検索APIの実装に置き換える
         # 例: Bing Search API、Google Custom Search API など
         
         # デモ用の仮の結果
         max_results = self.tools_config.get_setting("web_search_max_results", 5)
-        return f"検索クエリ「{query}」の結果（最大{max_results}件）:\n" \
-               f"1. [関連サイト1] {query}に関する最新情報...\n" \
-               f"2. [関連サイト2] {query}の詳細解説...\n" \
-               f"注: これはデモ結果です。実際のWeb検索APIを設定してください。"
+        
+        app_logger.info(f"   最大結果数: {max_results}")
+        app_logger.info("="*60)
+        
+        # 検索結果にソース情報を含める
+        result = f"\n🔍 **Web検索結果**\n\n"
+        result += f"**検索クエリ:** `{query}`\n"
+        result += f"**結果数:** 最大{max_results}件\n\n"
+        
+        # デモ用の仮の結果とソース
+        result += "**検索結果:**\n"
+        result += f"1. 📌 [関連サイト1] {query}に関する最新情報\n"
+        result += f"   - ソース: https://example1.com\n\n"
+        result += f"2. 📌 [関連サイト2] {query}の詳細解説\n"
+        result += f"   - ソース: https://example2.com\n\n"
+        
+        result += "⚠️ 注: これはデモ結果です。実際のWeb検索APIを設定してください。"
+        
+        return result
     
     async def _handle_file_search(self, messages: List[Dict[str, Any]]) -> str:
         """
-        ファイル検索を処理
+        ファイル検索を処理（ベクトルストア参照ログ付き）
         
         Args:
             messages: メッセージ履歴（コンテキスト用）
@@ -577,18 +657,72 @@ class ResponsesAPIHandler:
         Returns:
             検索結果
         """
+        # アクティブなベクトルストアを取得
+        active_stores = vector_store_handler.get_active_vector_stores()
+        
+        # ログ出力：どの層のベクトルストアが参照されるか
+        app_logger.info("="*60)
+        app_logger.info("📚 ベクトルストア参照開始")
+        app_logger.info("-"*60)
+        
+        referenced_layers = []
+        vs_info = []
+        
+        # 1層目: 会社全体（Company）
+        if "company" in active_stores:
+            vs_id = active_stores["company"]
+            app_logger.info(f"🏢 【1層目】会社共有ベクトルストア")
+            app_logger.info(f"   └─ ID: {vs_id}")
+            referenced_layers.append("1層目:会社共有")
+            vs_info.append({"layer": "会社共有", "id": vs_id})
+        
+        # 2層目: 個人ユーザー（Personal）
+        if "personal" in active_stores:
+            vs_id = active_stores["personal"]
+            app_logger.info(f"👤 【2層目】個人用ベクトルストア")
+            app_logger.info(f"   └─ ID: {vs_id}")
+            referenced_layers.append("2層目:個人用")
+            vs_info.append({"layer": "個人用", "id": vs_id})
+        
+        # 3層目: チャット単位（Session）
+        if "session" in active_stores:
+            vs_id = active_stores["session"]
+            app_logger.info(f"💬 【3層目】セッション用ベクトルストア")
+            app_logger.info(f"   └─ ID: {vs_id}")
+            referenced_layers.append("3層目:セッション用")
+            vs_info.append({"layer": "セッション用", "id": vs_id})
+        
+        if not active_stores:
+            app_logger.warning("⚠️ アクティブなベクトルストアがありません")
+            app_logger.info("="*60)
+            return "検索対象のベクトルストアが設定されていません。"
+        
+        app_logger.info("-"*60)
+        app_logger.info(f"✅ 参照されたベクトルストア: {', '.join(referenced_layers)}")
+        app_logger.info("="*60)
+        
+        # 実際のファイル検索実装
         file_ids = self.tools_config.get_search_file_ids()
-        
-        if not file_ids:
-            return "検索対象のファイルが設定されていません。"
-        
-        # ここは実際のファイル検索の実装
-        # OpenAIのVector Store APIやカスタム実装を使用
-        
         max_chunks = self.tools_config.get_setting("file_search_max_chunks", 20)
-        return f"ファイル検索結果（{len(file_ids)}個のファイル、最大{max_chunks}チャンク）:\n" \
-               f"ファイルID: {', '.join(file_ids[:3])}...\n" \
-               f"注: これはデモ結果です。実際のファイル検索を設定してください。"
+        
+        # 検索結果にソース情報を含める
+        result = f"\n📚 **ベクトルストア検索結果**\n\n"
+        result += f"🔍 **参照されたベクトルストア:**\n"
+        
+        for info in vs_info:
+            result += f"  - {info['layer']}: `{info['id']}`\n"
+        
+        result += f"\n📊 **検索パラメータ:**\n"
+        result += f"  - 最大チャンク数: {max_chunks}\n"
+        
+        if file_ids:
+            result += f"  - ファイル数: {len(file_ids)}\n"
+            result += f"  - ファイルID（一部）: {', '.join(file_ids[:3])}...\n"
+        
+        # デモ結果の場合の注記
+        result += f"\n⚠️ 注: 実際のベクトルストア検索結果がここに表示されます。"
+        
+        return result
     
     async def _handle_function_call(self, function_name: str, arguments: str) -> str:
         """

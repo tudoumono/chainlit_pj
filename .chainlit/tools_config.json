@@ -2,7 +2,7 @@
   "enabled": true,
   "vector_store_layers": {
     "company": false,
-    "personal": true,
+    "personal": false,
     "thread": true
   },
   "tools": {

@@ -14,11 +14,6 @@ OpenAIの`beta.vector_stores` APIは廃止予定（deprecated）となりまし�
 - AttributeError時は自動的にローカルJSON管理に切り替わる
 - 短期的には現状のままでも動作する
 
-### 新しい実装（vector_store_handler_v2.py）
-- 完全なローカル管理版
-- OpenAI APIへの依存を削除
-- JSONファイルでベクトルストア情報を管理
-- ファイルアップロードAPIは引き続き使用可能
 
 ## 移行方法
 
@@ -33,13 +28,7 @@ from utils.vector_store_handler import vector_store_handler
 from utils.vector_store_handler_v2 import vector_store_handler
 ```
 
-### 方法2: 段階的移行
 
-現在のコードはフォールバック処理があるため、以下の手順で段階的に移行可能：
-
-1. **第1段階**（現在）: APIエラー時は自動的にローカル管理に切り替わる
-2. **第2段階**: テスト環境でv2を検証
-3. **第3段階**: 本番環境でv2に切り替え
 
 ## データ構造
 

@@ -12,7 +12,7 @@ Phase 5 (SQLite永続化版 + Responses API): Chainlitの履歴管理
 
 参照ドキュメント:
 - OpenAI公式APIリファレンス: https://platform.openai.com/docs/api-reference/responses
-- ローカルドキュメント: F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\
+- ローカルドキュメント: F:/10_code/AI_Workspace_App_Chainlit/openai_responseAPI_reference/
   - openai responseAPI reference (Text generation).md
   - openai responseAPI reference (Conversation state).md
   - openai responseAPI reference (Streaming API responses).md
@@ -41,6 +41,14 @@ load_dotenv()
 # ログシステムをインポート
 from utils.logger import app_logger
 
+# WebSocket接続エラーハンドラーをインポート
+try:
+    from utils.connection_handler import connection_monitor, handle_websocket_error
+    app_logger.info("[SUCCESS] WebSocket接続モニターを初期化しました")
+except ImportError as e:
+    app_logger.warning(f"[WARNING] WebSocket接続モニターの初期化をスキップ: {e}")
+    connection_monitor = None
+
 # データレイヤーをインポート（SQLiteを優先して永続化）
 data_layer_type = None
 
@@ -49,20 +57,20 @@ try:
     # SQLiteデータレイヤーを使用（優先）
     import data_layer
     data_layer_type = "SQLite (Persistent)"
-    app_logger.info("✅ SQLiteデータレイヤーを使用")
-    app_logger.info("📝 履歴は.chainlit/chainlit.dbに永続化されます")
-    print("✅ SQLiteデータレイヤーを使用")
-    print("📝 履歴は.chainlit/chainlit.dbに永続化されます")
+    app_logger.info("[SUCCESS] SQLiteデータレイヤーを使用")
+    app_logger.info("[INFO] 履歴は.chainlit/chainlit.dbに永続化されます")
+    print("[SUCCESS] SQLiteデータレイヤーを使用")
+    print("[INFO] 履歴は.chainlit/chainlit.dbに永続化されます")
 except Exception as e:
-    app_logger.error(f"⚠️ SQLiteデータレイヤーのエラー: {e}")
-    print(f"⚠️ SQLiteデータレイヤーのエラー: {e}")
+    app_logger.error(f"[WARNING] SQLiteデータレイヤーのエラー: {e}")
+    print(f"[WARNING] SQLiteデータレイヤーのエラー: {e}")
     try:
         # インメモリデータレイヤーをフォールバックとして使用
         import simple_data_layer
         data_layer_type = "Simple In-Memory"
-        app_logger.info("✅ シンプルなインメモリデータレイヤーを使用")
-        print("✅ シンプルなインメモリデータレイヤーを使用")
-        print("📝 注意: 履歴はアプリケーション再起動で消失します")
+        app_logger.info("[SUCCESS] シンプルなインメモリデータレイヤーを使用")
+        print("[SUCCESS] シンプルなインメモリデータレイヤーを使用")
+        print("[INFO] 注意: 履歴はアプリケーション再起動で消失します")
     except ImportError:
         try:
             # SQLAlchemyDataLayerを試す（PostgreSQL）
@@ -74,17 +82,17 @@ except Exception as e:
             if pg_conninfo:
                 cl_data._data_layer = SQLAlchemyDataLayer(conninfo=pg_conninfo)
                 data_layer_type = "SQLAlchemy (PostgreSQL)"
-                app_logger.info("✅ SQLAlchemyDataLayer（PostgreSQL）を使用")
-                print("✅ SQLAlchemyDataLayer（PostgreSQL）を使用")
+                app_logger.info("[SUCCESS] SQLAlchemyDataLayer（PostgreSQL）を使用")
+                print("[SUCCESS] SQLAlchemyDataLayer（PostgreSQL）を使用")
             else:
-                app_logger.warning("⚠️ PostgreSQL接続文字列が設定されていません")
-                print("⚠️ PostgreSQL接続文字列が設定されていません")
-                print("📝 履歴機能を使用するには、data_layerまたは")
+                app_logger.warning("[WARNING] PostgreSQL接続文字列が設定されていません")
+                print("[WARNING] PostgreSQL接続文字列が設定されていません")
+                print("[INFO] 履歴機能を使用するには、data_layerまたは")
                 print("   simple_data_layer.pyを確認してください")
         except Exception as e:
-            app_logger.error(f"⚠️ SQLAlchemyDataLayerのエラー: {e}")
-            print(f"⚠️ SQLAlchemyDataLayerのエラー: {e}")
-            print("📝 data_layer.pyまたはsimple_data_layer.pyを使用してください")
+            app_logger.error(f"[WARNING] SQLAlchemyDataLayerのエラー: {e}")
+            print(f"[WARNING] SQLAlchemyDataLayerのエラー: {e}")
+            print("[INFO] data_layer.pyまたはsimple_data_layer.pyを使用してください")
 
 # utils モジュールをインポート（設定管理とAPI呼び出しのみ使用）
 from utils.config import config_manager
@@ -94,6 +102,7 @@ from utils.persona_manager import persona_manager  # Phase 6: ペルソナ管理
 from utils.vector_store_handler import vector_store_handler  # Phase 7: ベクトルストア
 from utils.vector_store_sync import get_sync_manager  # ベクトルストア同期管理
 from utils.action_helper import ask_confirmation  # Actionヘルパー
+from utils.integrated_vs_commands import handle_integrated_vs_commands, handle_integrated_file_upload  # 統合ベクトルストアコマンド
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
@@ -132,7 +141,7 @@ async def on_chat_resume(thread: ThreadDict):
     await persona_manager.initialize_default_personas()
     
     # Phase 7: ベクトルストアの初期化
-    cl.user_session.set("uploaded_files", [])
+    # uploaded_filesセッション変数は廃止（ベクトルストアから直接取得）
     
     # ユーザー情報を取得
     user = cl.user_session.get("user")
@@ -152,14 +161,27 @@ async def on_chat_resume(thread: ThreadDict):
         # 3層目: 復元したスレッド情報から取得
         session_vs_id = thread.get("vector_store_id")
         
-        # セッションにベクトルストアIDを保存
+        # セッションにベクトルストアIDを保存（個別に保存）
         cl.user_session.set("vector_store_ids", {
             "company": company_vs_id,
             "personal": personal_vs_id,
             "session": session_vs_id
         })
+        
+        # 互換性のために個別のキーも保存
+        cl.user_session.set("company_vs_id", company_vs_id)
+        cl.user_session.set("personal_vs_id", personal_vs_id)
+        cl.user_session.set("session_vs_id", session_vs_id)
+        cl.user_session.set("thread_vs_id", session_vs_id)  # 旧実装との互換性
+        
+        # デバッグ出力
+        app_logger.debug(f"🔍 VSデバッグ: company={company_vs_id if company_vs_id else 'None'}, personal={personal_vs_id if personal_vs_id else 'None'}, session={session_vs_id if session_vs_id else 'None'}")
     else:
         cl.user_session.set("vector_store_ids", {})
+        cl.user_session.set("company_vs_id", None)
+        cl.user_session.set("personal_vs_id", None)
+        cl.user_session.set("session_vs_id", None)
+        cl.user_session.set("thread_vs_id", None)
     
     # ベクトルストアの同期を実行
     sync_manager = get_sync_manager(vector_store_handler)
@@ -397,6 +419,36 @@ async def on_chat_start():
     """
     新しいチャットセッション開始時の処理
     """
+    # セッションIDを取得
+    session_id = None
+    thread_id = None
+    
+    # 複数の方法でセッションIDを取得を試みる
+    try:
+        if hasattr(cl.context, 'session'):
+            if hasattr(cl.context.session, 'thread_id'):
+                thread_id = cl.context.session.thread_id
+            if hasattr(cl.context.session, 'id'):
+                session_id = cl.context.session.id
+    except Exception as e:
+        app_logger.debug(f"セッションID取得エラー: {e}")
+    
+    # フォールバック：user_sessionから取得
+    if not session_id:
+        session_id = cl.user_session.get("id", str(uuid.uuid4()))
+    
+    # セッションIDをセッションに保存
+    cl.user_session.set("session_id", session_id)
+    cl.user_session.set("thread_id", thread_id or session_id)
+    
+    # WebSocket接続の記録
+    if connection_monitor:
+        user = cl.user_session.get("user")
+        connection_monitor.log_connection(session_id, {
+            "user": user.identifier if user else "anonymous",
+            "timestamp": datetime.now().isoformat()
+        })
+    
     # 設定を読み込み
     settings = config_manager.get_all_settings()
     cl.user_session.set("settings", settings)
@@ -408,7 +460,7 @@ async def on_chat_start():
     await persona_manager.initialize_default_personas()
     
     # Phase 7: ベクトルストアの初期化
-    cl.user_session.set("uploaded_files", [])
+    # uploaded_filesセッション変数は廃止（ベクトルストアから直接取得）
     
     # ユーザー情報を取得
     user = cl.user_session.get("user")
@@ -434,14 +486,27 @@ async def on_chat_start():
                     await data_layer_instance.set_user_vector_store_id(user_id, new_vs_id)
                     personal_vs_id = new_vs_id
         
-        # セッションにベクトルストアIDを保存
+        # セッションにベクトルストアIDを保存（個別に保存）
         cl.user_session.set("vector_store_ids", {
             "company": company_vs_id,
             "personal": personal_vs_id,
             "session": None  # セッションVSはファイル添付時に作成
         })
+        
+        # 互換性のために個別のキーも保存
+        cl.user_session.set("company_vs_id", company_vs_id)
+        cl.user_session.set("personal_vs_id", personal_vs_id)
+        cl.user_session.set("session_vs_id", None)
+        cl.user_session.set("thread_vs_id", None)
+        
+        # デバッグ出力
+        app_logger.debug(f"🔍 VSデバッグ: company={company_vs_id if company_vs_id else 'None'}, personal={personal_vs_id if personal_vs_id else 'None'}, session=None")
     else:
         cl.user_session.set("vector_store_ids", {})
+        cl.user_session.set("company_vs_id", None)
+        cl.user_session.set("personal_vs_id", None)
+        cl.user_session.set("session_vs_id", None)
+        cl.user_session.set("thread_vs_id", None)
     
     # モデルリストを動的に取得
     available_models = config_manager.get_available_models()
@@ -565,6 +630,10 @@ async def on_chat_start():
 
 **Version**: {VERSION}
 
+## 🆔 セッション情報
+- **セッションID**: `{session_id if session_id else 'N/A'}`
+- **スレッドID**: `{thread_id if thread_id else 'N/A'}`
+
 ## 📊 現在の状態
 - **APIキー**: {api_status}
 - **デフォルトモデル**: {settings.get('DEFAULT_MODEL', 'gpt-4o-mini')}
@@ -585,7 +654,6 @@ async def on_chat_start():
 - `/persona edit [名前]` - ペルソナを編集
 - `/persona delete [名前]` - ペルソナを削除
 - `/vs` または `/vector` - ベクトルストア管理
-- `/kb` - ナレッジベースの状態表示
 
 💡 **ヒント**: 
 - 会話は永続的に保存されます
@@ -676,7 +744,17 @@ async def on_settings_update(settings):
                 # .envファイルを更新
                 config_manager.update_env_value("COMPANY_VECTOR_STORE_ID", company_id)
                 os.environ["COMPANY_VECTOR_STORE_ID"] = company_id
+                
+                # セッションにも保存
+                vs_ids = cl.user_session.get("vector_store_ids", {})
+                vs_ids["company"] = company_id
+                cl.user_session.set("vector_store_ids", vs_ids)
+                
+                # 互換性のために個別キーでも保存
+                cl.user_session.set("company_vs_id", company_id)
+                
                 app_logger.info(f"会社全体ベクトルストアID設定: {company_id}")
+                app_logger.debug(f"🔍 VSデバッグ: company_vs_id={company_id[:8]}...")
     
     # 2層目: 個人ユーザー
     if "VS_Layer_Personal" in settings:
@@ -690,10 +768,13 @@ async def on_settings_update(settings):
         if personal_id_value is not None:
             personal_id = personal_id_value.strip()
             if personal_id:
-                # セッションに保存
+                # セッションに複数のキーで保存
                 vs_ids = cl.user_session.get("vector_store_ids", {})
                 vs_ids["personal"] = personal_id
                 cl.user_session.set("vector_store_ids", vs_ids)
+                
+                # 互換性のために個別キーでも保存
+                cl.user_session.set("personal_vs_id", personal_id)
                 
                 # データベースにも保存
                 user = cl.user_session.get("user")
@@ -703,6 +784,7 @@ async def on_settings_update(settings):
                         await data_layer_instance.set_user_vector_store_id(user.identifier, personal_id)
                 
                 app_logger.info(f"個人ベクトルストアID設定: {personal_id}")
+                app_logger.debug(f"🔍 VSデバッグ: personal_vs_id={personal_id[:8]}...")
     
     # 3層目: チャット単位
     if "VS_Layer_Thread" in settings:
@@ -763,6 +845,15 @@ async def on_message(message: cl.Message):
     current_user = cl.user_session.get("user")
     user_id = current_user.identifier if current_user else "anonymous"
     
+    # スレッドIDをセッションに保存（auto_vector_store_managerが使用）
+    if hasattr(cl.context, 'session'):
+        if hasattr(cl.context.session, 'thread_id'):
+            cl.user_session.set("thread_id", cl.context.session.thread_id)
+            cl.user_session.set("session_id", cl.context.session.thread_id)  # 通常同じ
+        elif hasattr(cl.context.session, 'id'):
+            cl.user_session.set("thread_id", cl.context.session.id)
+            cl.user_session.set("session_id", cl.context.session.id)
+    
     app_logger.message_received(user_input, user_id)
     app_logger.debug(f"📥 メッセージ受信", 
                      user=user_id,
@@ -773,98 +864,13 @@ async def on_message(message: cl.Message):
     message_count = cl.user_session.get("message_count", 0) + 1
     cl.user_session.set("message_count", message_count)
     
-    # Phase 7: ファイルアップロード処理
+    # Phase 7: ファイルアップロード処理（統合版）
     if message.elements:
-        # ファイル処理中のフラグを設定
-        processing_msg = await cl.Message(
-            content="📤 ファイルをアップロード中です。しばらくお待ちください...",
-            author="System"
-        ).send()
-        
-        uploaded_file_ids = []
-        for element in message.elements:
-            if element.type == "file":
-                try:
-                    # ファイルを処理
-                    file_id = await vector_store_handler.process_uploaded_file(element)
-                    if file_id:
-                        uploaded_file_ids.append(file_id)
-                        
-                        # セッションのアップロードファイルリストに追加
-                        uploaded_files = cl.user_session.get("uploaded_files", [])
-                        uploaded_files.append({
-                            "file_id": file_id,
-                            "filename": element.name,
-                            "timestamp": datetime.now().isoformat()
-                        })
-                        cl.user_session.set("uploaded_files", uploaded_files)
-                        
-                        # 処理状況を更新
-                        processing_msg.content = f"✅ ファイルをアップロードしました: {element.name}"
-                        await processing_msg.update()
-                except Exception as e:
-                    processing_msg.content = f"❌ ファイルアップロードエラー: {e}"
-                    await processing_msg.update()
-        
-        # アップロードされたファイルをベクトルストアに追加するか確認
-        if uploaded_file_ids:
-            # ベクトルストアに追加するか確認（ユーザーの応答を待つ）
-            res = await cl.AskActionMessage(
-                content=f"{len(uploaded_file_ids)}件のファイルをナレッジベースに追加しますか？",
-                actions=[
-                    cl.Action(name="add_to_kb", value="yes", payload={"action": "yes"}, label="はい"),
-                    cl.Action(name="skip", value="no", payload={"action": "no"}, label="いいえ")
-                ],
-                timeout=60  # 60秒のタイムアウトを設定
-            ).send()
-            
-            # ユーザーの応答を待つ
-            if res and res.get("payload", {}).get("action") == "yes":
-                # ベクトルストアIDを取得
-                vs_ids = cl.user_session.get("vector_store_ids", {})
-                session_vs_id = vs_ids.get("session")
-                thread_id = cl.user_session.get("thread_id") or cl.context.session.thread_id
-                
-                # セッション用ベクトルストアが未作成の場合は作成
-                if not session_vs_id:
-                    session_vs_id = await vector_store_handler.create_vector_store(
-                        name=f"Session VS for thread {thread_id[:8] if thread_id else 'unknown'}"
-                    )
-                    if session_vs_id:
-                        # データベースに保存
-                        data_layer_instance = cl_data._data_layer
-                        if data_layer_instance and hasattr(data_layer_instance, 'update_thread_vector_store'):
-                            await data_layer_instance.update_thread_vector_store(thread_id, session_vs_id)
-                        
-                        vs_ids["session"] = session_vs_id
-                        cl.user_session.set("vector_store_ids", vs_ids)
-                
-                # ファイルをベクトルストアに追加
-                if session_vs_id:
-                    success = await vector_store_handler.add_files_to_vector_store(session_vs_id, uploaded_file_ids)
-                    if success:
-                        await cl.Message(
-                            content=f"✅ {len(uploaded_file_ids)}個のファイルをナレッジベースに追加しました。",
-                            author="System"
-                        ).send()
-                    else:
-                        await cl.Message(
-                            content="❌ ファイルのベクトルストアへの追加に失敗しました。",
-                            author="System"
-                        ).send()
-            else:
-                await cl.Message(
-                    content="ℹ️ ファイルはアップロードされましたが、ナレッジベースには追加されませんでした。",
-                    author="System"
-                ).send()
+        # 統合版のファイルアップロード処理を呼び出す
+        await handle_integrated_file_upload(message.elements)
         
         # ファイルがアップロードされた場合でも、メッセージがあれば処理を続ける
         if not user_input:
-            # アップロード完了メッセージ
-            await cl.Message(
-                content="✅ ファイルアップロード処理が完了しました。メッセージを入力してください。",
-                author="System"
-            ).send()
             return
     
     # コマンド処理
@@ -926,7 +932,8 @@ async def on_message(message: cl.Message):
     session_data = {
         "vector_store_ids": cl.user_session.get("vector_store_ids", {}),
         "personal_vs_id": cl.user_session.get("personal_vs_id"),
-        "thread_vs_id": cl.user_session.get("thread_vs_id")
+        "thread_vs_id": cl.user_session.get("thread_vs_id"),
+        "session_vs_id": cl.user_session.get("session_vs_id")  # auto_vector_store_managerが使用
     }
     
     async for chunk in responses_handler.create_response(
@@ -1192,86 +1199,14 @@ async def handle_command(user_input: str):
             else:
                 await switch_persona(parts[1])
     elif cmd == "/kb" or cmd == "/knowledge":
-        if len(parts) == 1:
-            await show_knowledge_base()
-        elif len(parts) > 1:
-            action = parts[1].lower()
-            if action == "clear":
-                await clear_knowledge_base()
-            elif action == "list":
-                await show_knowledge_base()
-            else:
-                await cl.Message(
-                    content="❌ 不明なコマンド\n使い方: `/kb` - 状態表示, `/kb clear` - クリア",
-                    author="System"
-                ).send()
+        # /kbコマンドは廃止され、/vsコマンドに統合されました
+        await cl.Message(
+            content="ℹ️ `/kb`コマンドは廃止されました。\n\n代わりに以下のコマンドをご利用ください：\n- `/vs` - ベクトルストア管理\n- `/vs gui` - GUI管理パネル\n- `/vs session` - セッション情報\n\nファイルをアップロードすると自動的にベクトルストアに追加されます。",
+            author="System"
+        ).send()
     elif cmd == "/vs" or cmd == "/vector":
-        if len(parts) == 1:
-            await show_vector_stores()
-        else:
-            action = parts[1].lower()
-            if action == "create":
-                if len(parts) > 2:
-                    await create_vector_store(parts[2])
-                else:
-                    await create_vector_store("Personal Knowledge Base")
-            elif action == "list":
-                await show_vector_stores()
-            elif action == "info":
-                if len(parts) > 2:
-                    await show_vector_store_info(parts[2])
-                else:
-                    await cl.Message(
-                        content="❌ ベクトルストアIDを指定してください。\n例: `/vs info vs_xxxxx`",
-                        author="System"
-                    ).send()
-            elif action == "delete":
-                if len(parts) > 2:
-                    await delete_vector_store(parts[2])
-                else:
-                    await cl.Message(
-                        content="❌ 削除するベクトルストアIDを指定してください。\n例: `/vs delete vs_xxxxx`",
-                        author="System"
-                    ).send()
-            elif action == "files":
-                if len(parts) > 2:
-                    await show_vector_store_files(parts[2])
-                else:
-                    await cl.Message(
-                        content="❌ ベクトルストアIDを指定してください。\n例: `/vs files vs_xxxxx`",
-                        author="System"
-                    ).send()
-            elif action == "use":
-                if len(parts) > 2:
-                    await set_personal_vector_store(parts[2])
-                else:
-                    await cl.Message(
-                        content="❌ 使用するベクトルストアIDを指定してください。\n例: `/vs use vs_xxxxx`",
-                        author="System"
-                    ).send()
-            elif action == "sync":
-                await sync_vector_stores()
-            elif action == "rename":
-                if len(parts) > 2:
-                    # IDと新しい名前を分割
-                    rename_parts = user_input[len("/vs rename"):].strip().split(maxsplit=1)
-                    if len(rename_parts) == 2:
-                        await rename_vector_store(rename_parts[0], rename_parts[1])
-                    else:
-                        await cl.Message(
-                            content="❌ ベクトルストアIDと新しい名前を指定してください。\n例: `/vs rename vs_xxxxx 新しい名前`",
-                            author="System"
-                        ).send()
-                else:
-                    await cl.Message(
-                        content="❌ ベクトルストアIDと新しい名前を指定してください。\n例: `/vs rename vs_xxxxx 新しい名前`",
-                        author="System"
-                    ).send()
-            else:
-                await cl.Message(
-                    content="❌ 不明なアクション: " + action + "\n使用可能: create, sync, list, info, delete, files, use, rename",
-                    author="System"
-                ).send()
+        # 統合版のベクトルストアコマンドハンドラを使用
+        await handle_integrated_vs_commands(user_input)
     else:
         await cl.Message(
             content=f"❌ 不明なコマンド: {cmd}\n`/help` でコマンド一覧を確認してください。",
@@ -2215,7 +2150,6 @@ async def add_files_to_knowledge_base(file_ids: List[str]):
 async def show_knowledge_base():
     """ナレッジベースの状態を表示"""
     vector_stores = cl.user_session.get("vector_stores", {})
-    uploaded_files = cl.user_session.get("uploaded_files", [])
     
     message = "# 📚 ナレッジベース\n\n"
     
@@ -2223,14 +2157,27 @@ async def show_knowledge_base():
     message += "## ベクトルストア\n"
     if vector_stores:
         for store_type, store_id in vector_stores.items():
-            message += f"- **{store_type}**: `{store_id[:8]}...`\n"
+            message += f"- **{store_type}**: `{store_id}`\n"
     else:
         message += "*ベクトルストアが作成されていません*\n"
     
+    # ベクトルストアからファイル情報を取得
     message += "\n## アップロードされたファイル\n"
-    if uploaded_files:
-        for file_info in uploaded_files:
-            message += f"- 📄 {file_info['filename']} (ID: `{file_info['file_id'][:8]}...`)\n"
+    
+    # セッションVSからファイルを取得
+    session_vs_id = cl.user_session.get("session_vs_id")
+    if session_vs_id:
+        try:
+            files = await vector_store_handler.get_vector_store_files(session_vs_id)
+            if files:
+                for file_info in files:
+                    file_id = file_info.get('id', 'unknown')
+                    message += f"- 📄 ファイル (ID: `{file_id}`)\n"
+            else:
+                message += "*ファイルがアップロードされていません*\n"
+        except Exception as e:
+            print(f"[DEBUG] ファイル情報取得エラー: {e}")
+            message += "*ファイル情報を取得できませんでした*\n"
     else:
         message += "*ファイルがアップロードされていません*\n"
     
@@ -2265,7 +2212,6 @@ async def clear_knowledge_base():
             
             # セッション情報をクリア
             cl.user_session.set("vector_stores", {})
-            cl.user_session.set("uploaded_files", [])
             
             await cl.Message(
                 content="✅ ナレッジベースをクリアしました",
@@ -2431,7 +2377,27 @@ async def show_status():
     """設定状態を表示"""
     settings = config_manager.get_all_settings()
     
+    # 現在のセッションIDを取得
+    session_id = cl.user_session.get("session_id")
+    thread_id = cl.user_session.get("thread_id")
+    
+    # 現在のセッションからも取得を試みる
+    try:
+        if not session_id and hasattr(cl.context, 'session'):
+            if hasattr(cl.context.session, 'id'):
+                session_id = cl.context.session.id
+        if not thread_id and hasattr(cl.context, 'session'):
+            if hasattr(cl.context.session, 'thread_id'):
+                thread_id = cl.context.session.thread_id
+    except Exception as e:
+        app_logger.debug(f"セッションID取得エラー: {e}")
+    
     status_message = f"""
+## 🆔 セッション情報
+
+- **セッションID**: `{session_id if session_id else 'N/A'}`
+- **スレッドID**: `{thread_id if thread_id else 'N/A'}`
+
 ## 📊 現在の設定
 
 - **APIキー**: {settings.get('OPENAI_API_KEY_DISPLAY', '未設定')}
@@ -2443,7 +2409,33 @@ async def show_status():
 - **Tools機能**: {"有効" if tools_config.is_enabled() else "無効"}
 """
     
+    # WebSocket接続状態を追加
+    if connection_monitor:
+        conn_status = connection_monitor.get_connection_status()
+        status_message += f"""
+
+## 🔌 WebSocket接続状態
+- **アクティブ接続数**: {conn_status['active_connections']}
+- **最近のエラー数**: {conn_status['recent_errors']}
+"""
+        if conn_status['last_error']:
+            last_error = conn_status['last_error']
+            status_message += f"- **最終エラー**: {last_error['type']} ({last_error['timestamp'].strftime('%H:%M:%S')})\n"
+    
     await cl.Message(content=status_message, author="System").send()
+
+
+@cl.on_chat_end
+async def on_chat_end():
+    """
+    チャット終了時の処理
+    """
+    # WebSocket接続の終了を記録
+    if connection_monitor:
+        session_id = cl.user_session.get("id", "unknown")
+        connection_monitor.log_disconnection(session_id, "チャット終了")
+    
+    app_logger.info("👤 チャットセッション終了")
 
 
 if __name__ == "__main__":

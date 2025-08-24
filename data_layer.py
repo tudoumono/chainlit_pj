@@ -214,35 +214,7 @@ class SQLiteDataLayer(BaseDataLayer):
                         raise
         return thread
     
-    async def delete_thread(self, thread_id: str) -> None:
-        """スレッドを削除（ベクトルストアも一緒に削除）"""
-        print(f"🔧 SQLite: delete_threadが呼ばれました - Thread ID: {thread_id}")
-        
-        # まずベクトルストアIDを取得
-        thread = await self.get_thread(thread_id)
-        if thread and thread.get("vector_store_id"):
-            vector_store_id = thread["vector_store_id"]
-            print(f"   🗑️ ベクトルストアを削除: {vector_store_id}")
-            
-            # OpenAI側のベクトルストアを削除
-            try:
-                from utils.vector_store_handler import vector_store_handler
-                await vector_store_handler.delete_vector_store(vector_store_id)
-                print(f"   ✅ ベクトルストア削除完了: {vector_store_id}")
-            except Exception as e:
-                print(f"   ⚠️ ベクトルストア削除失敗: {e}")
-                # エラーでも履歴削除は続行
-        
-        # データベースからスレッドを削除
-        async with aiosqlite.connect(self.db_path) as db:
-            # 関連するステップを削除
-            await db.execute("DELETE FROM steps WHERE thread_id = ?", (thread_id,))
-            # 関連するエレメントを削除
-            await db.execute("DELETE FROM elements WHERE thread_id = ?", (thread_id,))
-            # スレッド本体を削除
-            await db.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
-            await db.commit()
-            print(f"   ✅ スレッドと関連データを削除しました")
+    # 最初のdelete_threadメソッドは削除（重複定義のため）
     
     async def update_thread(
         self,
@@ -1002,6 +974,134 @@ class SQLiteDataLayer(BaseDataLayer):
                 WHERE id = ?
             """, (vector_store_id, thread_id))
             await db.commit()
+    
+    async def delete_thread(self, thread_id: str) -> bool:
+        """
+        スレッドとその関連データを削除
+        ベクトルストアも含めて削除する
+        """
+        print(f"🔧 [DEBUG] delete_threadメソッド開始: thread_id={thread_id}")
+        try:
+            # まず、スレッドに関連付けられたベクトルストアIDを取得
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute(
+                    "SELECT * FROM threads WHERE id = ?",
+                    (thread_id,)
+                )
+                thread_data = await cursor.fetchone()
+                
+                if not thread_data:
+                    print(f"⚠️ スレッド {thread_id} が見つかりません")
+                    return False
+                
+                # デバッグ情報を出力
+                print(f"🔍 [DEBUG] スレッド情報:")
+                print(f"   - ID: {thread_data['id']}")
+                print(f"   - Name: {thread_data['name']}")
+                print(f"   - User ID: {thread_data['user_id']}")
+                print(f"   - Vector Store ID: {thread_data['vector_store_id']}")
+                print(f"   - Created At: {thread_data['created_at']}")
+                
+                vector_store_id = thread_data["vector_store_id"] if thread_data["vector_store_id"] else None
+                
+                # ベクトルストアが存在する場合、削除を試みる
+                if vector_store_id:
+                    print(f"🗑️ [DEBUG] ベクトルストア削除開始: {vector_store_id}")
+                    try:
+                        # vector_store_handlerをインポート
+                        from utils.vector_store_handler import vector_store_handler
+                        
+                        if not vector_store_handler:
+                            print(f"❌ [DEBUG] vector_store_handlerがNoneです")
+                        elif not vector_store_handler.async_client:
+                            print(f"❌ [DEBUG] OpenAIクライアントが初期化されていません")
+                            # クライアントを再初期化
+                            vector_store_handler._init_clients()
+                        
+                        if vector_store_handler and vector_store_handler.async_client:
+                            # まずベクトルストアの情報を取得
+                            print(f"🔍 [DEBUG] ベクトルストア情報取得中...")
+                            vs_info = await vector_store_handler.get_vector_store_info(vector_store_id)
+                            
+                            if vs_info:
+                                print(f"📊 [DEBUG] ベクトルストア詳細:")
+                                print(f"   - Name: {vs_info.get('name', 'N/A')}")
+                                print(f"   - Status: {vs_info.get('status', 'N/A')}")
+                                print(f"   - Created At: {vs_info.get('created_at', 'N/A')}")
+                                
+                                # 削除実行
+                                print(f"🗑️ [DEBUG] OpenAI APIでベクトルストア削除を実行...")
+                                deleted = await vector_store_handler.delete_vector_store(vector_store_id)
+                                
+                                if deleted:
+                                    print(f"✅ ベクトルストア削除成功: {vector_store_id}")
+                                else:
+                                    print(f"⚠️ [DEBUG] ベクトルストア削除がFalseを返しました: {vector_store_id}")
+                                    print(f"   ※ 既に削除されている可能性があります")
+                            else:
+                                print(f"⚠️ [DEBUG] ベクトルストアが見つかりません: {vector_store_id}")
+                                print(f"   ※ 既に削除されているか、存在しない可能性があります")
+                        else:
+                            print(f"❌ [DEBUG] vector_store_handlerまたはasync_clientが利用できません")
+                            
+                    except ImportError as e:
+                        print(f"❌ [DEBUG] モジュールインポートエラー: {e}")
+                    except Exception as e:
+                        print(f"❌ [DEBUG] ベクトルストア削除中に予期しないエラー:")
+                        print(f"   エラータイプ: {type(e).__name__}")
+                        print(f"   エラーメッセージ: {str(e)}")
+                        import traceback
+                        print(f"   スタックトレース:\n{traceback.format_exc()}")
+                        # エラーがあってもスレッド削除は続行
+                else:
+                    print(f"ℹ️ [DEBUG] ベクトルストアIDが設定されていません（NULL）")
+                
+                # スレッドに関連するすべてのデータを削除
+                print(f"🗑️ [DEBUG] データベースからスレッドと関連データを削除中...")
+                
+                # ステップを削除
+                result = await db.execute(
+                    "DELETE FROM steps WHERE thread_id = ?",
+                    (thread_id,)
+                )
+                print(f"   - ステップ削除: {result.rowcount}件")
+                
+                # エレメントを削除
+                result = await db.execute(
+                    "DELETE FROM elements WHERE thread_id = ?",
+                    (thread_id,)
+                )
+                print(f"   - エレメント削除: {result.rowcount}件")
+                
+                # フィードバックを削除（ステップIDに関連付けられている場合）
+                result = await db.execute("""
+                    DELETE FROM feedbacks 
+                    WHERE for_id IN (
+                        SELECT id FROM steps WHERE thread_id = ?
+                    )
+                """, (thread_id,))
+                print(f"   - フィードバック削除: {result.rowcount}件")
+                
+                # 最後にスレッド自体を削除
+                result = await db.execute(
+                    "DELETE FROM threads WHERE id = ?",
+                    (thread_id,)
+                )
+                print(f"   - スレッド削除: {result.rowcount}件")
+                
+                await db.commit()
+                
+                print(f"✅ [DEBUG] スレッド削除完了: {thread_id}")
+                return True
+                
+        except Exception as e:
+            print(f"❌ [DEBUG] delete_threadメソッドでエラー発生:")
+            print(f"   エラータイプ: {type(e).__name__}")
+            print(f"   エラーメッセージ: {str(e)}")
+            import traceback
+            print(f"   スタックトレース:\n{traceback.format_exc()}")
+            return False
 
 
 # データレイヤーを設定

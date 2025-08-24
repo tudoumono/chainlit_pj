@@ -275,6 +275,10 @@ class ToolsConfig:
         Returns:
             有効なツールのリスト（API用フォーマット）
         """
+        print(f"🔍 [DEBUG] build_tools_parameter - セッション: {session is not None}")
+        if session:
+            print(f"🔍 [DEBUG] セッションキー: {list(session.keys()) if isinstance(session, dict) else 'Not a dict'}")
+        
         # Tools全体が無効でも、個別のツールが有効なら動作させる
         tools = []
         
@@ -288,41 +292,78 @@ class ToolsConfig:
         # ファイル検索ツール (file_searchタイプとして定義)
         # Tools全体が無効でもfile_searchが有効なら動作
         if self.is_tool_enabled("file_search"):
+            print(f"🔍 [DEBUG] file_searchツール有効")
             vector_store_ids = []
             
             # 1層目：会社全体（.envから）
             if self.is_layer_enabled("company"):
+                print(f"🔍 [DEBUG] 会社全体VS層有効")
+                # .envから取得
                 company_vs_id = os.getenv("COMPANY_VECTOR_STORE_ID")
-                if company_vs_id:
-                    vector_store_ids.append(company_vs_id)
+                
+                # セッションからも取得を試みる（設定更新後の値）
+                if session and not company_vs_id:
+                    company_vs_id = session.get("company_vs_id")
+                    if not company_vs_id:
+                        vs_ids = session.get("vector_store_ids", {})
+                        company_vs_id = vs_ids.get("company")
+                
+                print(f"🔍 [DEBUG] 会社全体VS ID: {company_vs_id[:8] if company_vs_id else 'None'}...")
+                if company_vs_id and company_vs_id.strip():
+                    vector_store_ids.append(company_vs_id.strip())
+                    print(f"✅ 会社VSを検索対象に追加: {company_vs_id[:8]}...")
             
             # 2層目：個人（セッションから）
             if session and self.is_layer_enabled("personal"):
-                # vector_store_ids辞書から取得
-                vs_ids = session.get("vector_store_ids", {})
-                personal_vs_id = vs_ids.get("personal") or session.get("personal_vs_id")
-                if personal_vs_id:
-                    vector_store_ids.append(personal_vs_id)
+                print(f"🔍 [DEBUG] 個人VS層有効")
+                # 複数の方法で取得を試みる
+                personal_vs_id = session.get("personal_vs_id")
+                if not personal_vs_id:
+                    vs_ids = session.get("vector_store_ids", {})
+                    personal_vs_id = vs_ids.get("personal")
+                
+                print(f"🔍 [DEBUG] 個人VS ID: {personal_vs_id[:8] if personal_vs_id else 'None'}...")
+                if personal_vs_id and personal_vs_id.strip():
+                    vector_store_ids.append(personal_vs_id.strip())
+                    print(f"✅ 個人VSを検索対象に追加: {personal_vs_id[:8]}...")
             
             # 3層目：チャット（セッションから）
             if session and self.is_layer_enabled("thread"):
-                # vector_store_ids辞書から取得
-                vs_ids = session.get("vector_store_ids", {})
-                thread_vs_id = vs_ids.get("session") or session.get("thread_vs_id")
-                if thread_vs_id:
-                    vector_store_ids.append(thread_vs_id)
+                print(f"🔍 [DEBUG] チャットVS層有効")
+                # 複数の方法で取得を試みる
+                session_vs_id = session.get("session_vs_id")
+                print(f"🔍 [DEBUG] session_vs_id直接: {session_vs_id[:8] if session_vs_id else 'None'}...")
+                
+                if not session_vs_id:
+                    session_vs_id = session.get("thread_vs_id")
+                    print(f"🔍 [DEBUG] thread_vs_id: {session_vs_id[:8] if session_vs_id else 'None'}...")
+                
+                if not session_vs_id:
+                    vs_ids = session.get("vector_store_ids", {})
+                    session_vs_id = vs_ids.get("session") or vs_ids.get("thread")
+                    print(f"🔍 [DEBUG] vs_ids辞書から: {session_vs_id[:8] if session_vs_id else 'None'}...")
+                
+                if session_vs_id and session_vs_id.strip():
+                    vector_store_ids.append(session_vs_id.strip())
+                    print(f"✅ セッションVSを検索対象に追加: {session_vs_id[:8]}...")
             
             # vector_store_idsが空の場合はfile_searchツールを追加しない
             # OpenAI APIは空のvector_store_idsを許可しないため
+            print(f"🔍 [DEBUG] 収集されたベクトルストアID数: {len(vector_store_ids)}")
             if vector_store_ids:
+                print(f"🔍 [DEBUG] ベクトルストアIDリスト: {[vs[:8] + '...' for vs in vector_store_ids]}")
                 # Responses API形式のfile_searchツール構造
                 file_search_config = {
                     "type": "file_search",
                     "vector_store_ids": vector_store_ids  # 直接vector_store_idsを配置
                 }
                 tools.append(file_search_config)
+                print(f"✅ file_searchツールを追加しました")
             else:
-                print("⚠️ file_searchツールは有効ですが、ベクトルストアが設定されていないためスキップします")
+                print("⚠️ file_searchツールは有効ですが、ベクトルストアIDが設定されていないためスキップします")
+                print("   ヒント: 1) 会社VSのIDを.envまたは設定画面で設定")
+                print("         2) 個人VSのIDをユーザー設定で設定")
+                print("         3) ファイルを添付してセッションVSを作成")
         
         # コードインタープリター (code_interpreterタイプとして定義)
         if self.is_enabled() and self.is_tool_enabled("code_interpreter"):
@@ -338,6 +379,13 @@ class ToolsConfig:
                     "type": "function",
                     "function": func
                 })
+        
+        print(f"🔍 [DEBUG] 最終的なツール数: {len(tools)}")
+        if tools:
+            for i, tool in enumerate(tools):
+                print(f"🔍 [DEBUG] ツール[{i}]: {tool.get('type', 'unknown')}")
+                if tool.get('type') == 'file_search':
+                    print(f"🔍 [DEBUG]   - vector_store_ids: {tool.get('vector_store_ids', [])}")
         
         return tools if tools else None
 

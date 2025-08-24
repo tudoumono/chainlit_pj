@@ -29,6 +29,15 @@ from datetime import datetime
 import aiofiles
 import mimetypes
 from pathlib import Path
+from utils.vector_store_api_helper import (
+    get_vector_store_api,
+    get_vector_store_files_api,
+    safe_create_vector_store,
+    safe_list_vector_stores,
+    safe_retrieve_vector_store,
+    safe_delete_vector_store,
+    safe_update_vector_store
+)
 
 
 class VectorStoreHandler:
@@ -155,9 +164,7 @@ class VectorStoreHandler:
     
     async def create_vector_store(self, name: str, file_ids: List[str] = None) -> Optional[str]:
         """
-        ベクトルストアを作成（Responses API準拠）
-        
-        参照: openai responseAPI reference (File search).md - Create a vector store
+        ベクトルストアを作成（API ヘルパー使用）
         
         Args:
             name: ベクトルストア名
@@ -173,58 +180,48 @@ class VectorStoreHandler:
             
             print(f"📝 ベクトルストア作成開始: {name}")
             
-            # Responses API形式でベクトルストアを作成
-            # 注意: betaは使用しない
-            vector_store = await self.async_client.vector_stores.create(
-                name=name
-            )
+            # APIヘルパーを使用してベクトルストアAPIを取得
+            vs_api = get_vector_store_api(self.async_client)
+            if not vs_api:
+                print("❌ ベクトルストアAPIが利用できません")
+                print("   OpenAI SDKのバージョンを確認してください")
+                return None
+            
+            # ベクトルストアを作成
+            if file_ids:
+                vector_store = await vs_api.create(
+                    name=name,
+                    file_ids=file_ids
+                )
+            else:
+                vector_store = await vs_api.create(
+                    name=name
+                )
             
             print(f"✅ ベクトルストア作成成功: {vector_store.id}")
             print(f"   名前: {vector_store.name}")
             
-            # ファイルがある場合は追加
-            if file_ids:
-                for file_id in file_ids:
-                    await self.add_file_to_vector_store(vector_store.id, file_id)
+            # ステータス確認
+            max_wait = 30
+            waited = 0
+            while waited < max_wait:
+                vs = await safe_retrieve_vector_store(self.async_client, vector_store.id)
+                if not vs:
+                    print(f"⚠️ ベクトルストアの取得に失敗: {vector_store.id}")
+                    break
+                    
+                status = getattr(vs, 'status', 'completed')  # statusがない場合はcompletedとみなす
+                if status == "completed":
+                    print(f"✅ ベクトルストアの準備が完了しました: {vs.id}")
+                    break
+                elif status == "failed":
+                    print(f"❌ ベクトルストアの作成に失敗しました: {vs.id}")
+                    return None
+                print(f"⏳ ベクトルストアを準備中... ({status})")
+                await asyncio.sleep(2)
+                waited += 2
             
             return vector_store.id
-            
-        except AttributeError as ae:
-            # vector_storesがない場合はbeta APIにフォールバック
-            print(f"⚠️ Responses APIが利用できません。Beta APIにフォールバックします")
-            try:
-                if file_ids:
-                    vector_store = await self.async_client.beta.vector_stores.create(
-                        name=name,
-                        file_ids=file_ids
-                    )
-                else:
-                    vector_store = await self.async_client.beta.vector_stores.create(
-                        name=name
-                    )
-                
-                print(f"✅ ベクトルストア作成成功（Beta API）: {vector_store.id}")
-                
-                # ステータス確認
-                max_wait = 30
-                waited = 0
-                while waited < max_wait:
-                    vs = await self.async_client.beta.vector_stores.retrieve(vector_store.id)
-                    if vs.status == "completed":
-                        print(f"✅ ベクトルストアの準備が完了しました: {vs.id}")
-                        break
-                    elif vs.status == "failed":
-                        print(f"❌ ベクトルストアの作成に失敗しました: {vs.id}")
-                        return None
-                    print(f"⏳ ベクトルストアを準備中... ({vs.status})")
-                    await asyncio.sleep(2)
-                    waited += 2
-                
-                return vector_store.id
-                
-            except Exception as e:
-                print(f"❌ Beta APIでもエラー: {e}")
-                return None
                 
         except Exception as e:
             print(f"❌ ベクトルストア作成エラー: {e}")
@@ -309,9 +306,7 @@ class VectorStoreHandler:
     
     async def add_file_to_vector_store(self, vector_store_id: str, file_id: str) -> bool:
         """
-        ベクトルストアにファイルを追加
-        
-        参照: openai responseAPI reference (File search).md - Add the file to the vector store
+        ベクトルストアにファイルを追加（APIヘルパー使用）
         
         Args:
             vector_store_id: ベクトルストアID
@@ -325,54 +320,66 @@ class VectorStoreHandler:
                 print("⚠️ OpenAIクライアントが初期化されていません")
                 return False
             
-            # Responses API形式でファイルを追加
-            try:
-                result = await self.async_client.vector_stores.files.create(
-                    vector_store_id=vector_store_id,
-                    file_id=file_id
-                )
-                print(f"✅ ファイルをベクトルストアに追加: {file_id}")
-                return True
-                
-            except AttributeError:
-                # Beta APIにフォールバック
-                print(f"⚠️ Responses APIが利用できません。Beta APIにフォールバック")
-                file_batch = await self.async_client.beta.vector_stores.file_batches.create(
+            # ベクトルストアAPIを取得
+            vs_api = get_vector_store_api(self.async_client)
+            if not vs_api:
+                print("❌ ベクトルストアAPIが利用できません")
+                return False
+            
+            print(f"📎 ファイルをベクトルストアに追加中: {file_id}")
+            
+            # file_batchesが利用可能か確認
+            if hasattr(vs_api, 'file_batches'):
+                file_batch = await vs_api.file_batches.create(
                     vector_store_id=vector_store_id,
                     file_ids=[file_id]
                 )
                 
-                print(f"✅ ファイルをベクトルストアに追加（Beta API）: {file_id}")
+                print(f"✅ ファイルバッチ作成: {file_batch.id}")
                 
                 # 処理完了を待つ
                 max_wait = 30
                 waited = 0
                 while waited < max_wait:
-                    batch = await self.async_client.beta.vector_stores.file_batches.retrieve(
+                    batch = await vs_api.file_batches.retrieve(
                         vector_store_id=vector_store_id,
                         batch_id=file_batch.id
                     )
-                    if batch.status == "completed":
+                    status = getattr(batch, 'status', 'completed')
+                    if status == "completed":
                         print(f"✅ ファイルのベクトル化が完了しました")
                         return True
-                    elif batch.status == "failed":
+                    elif status == "failed":
                         print(f"❌ ファイルのベクトル化に失敗しました")
                         return False
-                    print(f"⏳ ファイルを処理中... ({batch.status})")
+                    print(f"⏳ ファイルを処理中... ({status})")
                     await asyncio.sleep(2)
                     waited += 2
-                
+            
+            # filesが利用可能な場合
+            elif hasattr(vs_api, 'files'):
+                result = await vs_api.files.create(
+                    vector_store_id=vector_store_id,
+                    file_id=file_id
+                )
+                print(f"✅ ファイルを追加しました: {file_id}")
                 return True
+            
+            else:
+                print("❌ ファイル追加APIが見つかりません")
+                return False
+            
+            return True
             
         except Exception as e:
             print(f"❌ ファイル追加エラー: {e}")
+            import traceback
+            print(f"   スタックトレース:\n{traceback.format_exc()}")
             return False
     
     async def list_vector_stores(self) -> List[Dict]:
         """
-        ベクトルストア一覧を取得
-        
-        参照: openai responseAPI reference (File search).md - Check status
+        ベクトルストア一覧を取得（APIヘルパー使用）
         
         Returns:
             ベクトルストアのリスト
@@ -382,62 +389,33 @@ class VectorStoreHandler:
                 print("⚠️ OpenAIクライアントが初期化されていません")
                 return []
             
-            # Responses API形式で一覧取得を試みる
-            try:
-                vector_stores = await self.async_client.vector_stores.list()
-                stores_list = []
-                for vs in vector_stores.data:
-                    # 各ベクトルストアの詳細情報を取得してファイル数を含める
-                    try:
-                        vs_detail = await self.async_client.vector_stores.retrieve(vs.id)
-                        # ファイル数を取得
-                        file_count = 0
-                        if hasattr(vs_detail, 'file_counts'):
-                            file_count = vs_detail.file_counts.total if hasattr(vs_detail.file_counts, 'total') else vs_detail.file_counts
-                        
+            print(f"📁 ベクトルストア一覧を取得中...")
+            
+            # APIヘルパーを使用して一覧を取得
+            vector_stores_data = await safe_list_vector_stores(self.async_client)
+            
+            stores_list = []
+            for vs in vector_stores_data:
+                try:
+                    vs_detail = await safe_retrieve_vector_store(self.async_client, vs.id)
+                    if vs_detail:
                         stores_list.append({
                             "id": vs_detail.id,
-                            "name": vs_detail.name,
-                            "file_counts": {"total": file_count} if isinstance(file_count, int) else file_count,
-                            "created_at": vs_detail.created_at,
-                            "status": getattr(vs_detail, 'status', 'completed')
+                            "name": getattr(vs_detail, 'name', 'Unnamed'),
+                            "file_counts": getattr(vs_detail, 'file_counts', {}),
+                            "created_at": getattr(vs_detail, 'created_at', 0),
+                            "status": getattr(vs_detail, 'status', 'unknown')
                         })
-                    except Exception as e:
-                        # 詳細取得に失敗した場合は基本情報のみ
-                        print(f"⚠️ ベクトルストア {vs.id} の詳細取得に失敗: {e}")
-                        stores_list.append({
-                            "id": vs.id,
-                            "name": vs.name,
-                            "file_counts": {"total": 0},
-                            "created_at": vs.created_at,
-                            "status": "completed"
-                        })
-                return stores_list
-                
-            except AttributeError:
-                # Beta APIにフォールバック
-                print(f"⚠️ Responses APIが利用できません。Beta APIにフォールバック")
-                vector_stores = await self.async_client.beta.vector_stores.list()
-                
-                stores_list = []
-                for vs in vector_stores.data:
-                    try:
-                        vs_detail = await self.async_client.beta.vector_stores.retrieve(vs.id)
-                        stores_list.append({
-                            "id": vs_detail.id,
-                            "name": vs_detail.name,
-                            "file_counts": vs_detail.file_counts,
-                            "created_at": vs_detail.created_at,
-                            "status": vs_detail.status
-                        })
-                    except Exception as e:
-                        print(f"⚠️ ベクトルストア {vs.id} の取得に失敗しました: {e}")
-                        continue
-                
-                return stores_list
+                except Exception as e:
+                    print(f"⚠️ ベクトルストア {vs.id} の取得に失敗しました: {e}")
+                    continue
+            
+            return stores_list
             
         except Exception as e:
             print(f"❌ ベクトルストア一覧取得エラー: {e}")
+            import traceback
+            print(f"   スタックトレース:\n{traceback.format_exc()}")
             return []
     
     async def get_vector_store_files(self, vector_store_id: str) -> List[Dict]:
@@ -828,6 +806,16 @@ class VectorStoreHandler:
                 print("⚠️ OpenAIクライアントが初期化されていません")
                 return None
             
+            # IDの型チェック（リスト形式で渡される場合の対処）
+            if isinstance(vector_store_id, list):
+                print(f"⚠️ ベクトルストアIDがリスト形式で渡されました: {vector_store_id}")
+                if vector_store_id:
+                    vector_store_id = vector_store_id[0]  # 最初の要素を使用
+                    print(f"   最初の要素を使用: {vector_store_id}")
+                else:
+                    print("   空のリストのため処理をスキップ")
+                    return None
+            
             # Responses API形式で取得を試みる
             try:
                 vector_store = await self.async_client.vector_stores.retrieve(
@@ -843,6 +831,7 @@ class VectorStoreHandler:
                 
             except AttributeError:
                 # Beta APIにフォールバック
+                print(f"ℹ️ Responses APIが利用できないため、Beta APIにフォールバック")
                 vector_store = await self.async_client.beta.vector_stores.retrieve(
                     vector_store_id=vector_store_id
                 )
@@ -856,7 +845,11 @@ class VectorStoreHandler:
                 }
             
         except Exception as e:
-            print(f"❌ ベクトルストア情報取得エラー: {e}")
+            import traceback
+            print(f"❌ ベクトルストア情報取得エラー (ID: {vector_store_id}):")
+            print(f"   エラーの型: {type(e).__name__}")
+            print(f"   エラー詳細: {str(e)}")
+            print(f"   トレースバック:\n{traceback.format_exc()}")
             return None
     
     async def list_vector_store_files(self, vector_store_id: str) -> List[Dict]:
@@ -897,6 +890,114 @@ class VectorStoreHandler:
             formatted += f"   ステータス: {file_info.get('status', 'unknown')}\n\n"
         
         return formatted
+    
+    async def upload_file_to_vector_store(self, vector_store_id: str, file_path: str = None, file_bytes: bytes = None, filename: str = None) -> Optional[str]:
+        """
+        ファイルを直接ベクトルストアにアップロード（統合処理）
+        
+        Args:
+            vector_store_id: ベクトルストアID
+            file_path: ファイルパス（ファイルシステムから読み込む場合）
+            file_bytes: ファイルのバイトデータ（メモリから直接アップロードする場合）
+            filename: ファイル名（file_bytes使用時は必須）
+        
+        Returns:
+            アップロードされたファイルID、失敗時はNone
+        """
+        try:
+            if not self.async_client:
+                print("⚠️ OpenAIクライアントが初期化されていません")
+                return None
+            
+            # ベクトルストアの存在確認
+            try:
+                vs = await safe_retrieve_vector_store(self.async_client, vector_store_id)
+                if not vs:
+                    print(f"❌ ベクトルストア {vector_store_id} が見つかりません")
+                    return None
+            except Exception as e:
+                print(f"❌ ベクトルストア確認エラー: {e}")
+                return None
+            
+            # ファイルをアップロード
+            file_id = None
+            if file_path:
+                file_id = await self.upload_file(file_path, purpose="assistants")
+            elif file_bytes and filename:
+                file_id = await self.upload_file_from_bytes(file_bytes, filename, purpose="assistants")
+            else:
+                print("❌ ファイルパスまたはファイルデータが必要です")
+                return None
+            
+            if not file_id:
+                return None
+            
+            # ベクトルストアに直接追加
+            success = await self.add_file_to_vector_store(vector_store_id, file_id)
+            if success:
+                print(f"✅ ファイルをベクトルストアに統合アップロード: {file_id} -> {vector_store_id}")
+                return file_id
+            else:
+                # 失敗した場合はファイルを削除（クリーンアップ）
+                try:
+                    await self.async_client.files.delete(file_id)
+                    print(f"🗑️ 失敗したファイルをクリーンアップ: {file_id}")
+                except:
+                    pass
+                return None
+                
+        except Exception as e:
+            print(f"❌ 統合アップロードエラー: {e}")
+            return None
+    
+    async def process_uploaded_file(self, element, vector_store_id: str = None) -> Optional[str]:
+        """
+        Chainlitのファイルエレメントを処理してベクトルストアにアップロード
+        
+        Args:
+            element: Chainlitのファイルエレメント
+            vector_store_id: ベクトルストアID（必須）
+        
+        Returns:
+            アップロードされたファイルID、失敗時はNone
+        """
+        try:
+            if not vector_store_id:
+                print("❌ ベクトルストアIDが指定されていません")
+                return None
+            
+            # ファイル名とパスを取得
+            filename = element.name if hasattr(element, 'name') else 'unknown'
+            file_path = element.path if hasattr(element, 'path') else None
+            
+            # サポートされているファイルか確認
+            if not self.is_supported_file(filename):
+                print(f"⚠️ サポートされていないファイル形式: {filename}")
+                return None
+            
+            print(f"📤 ファイル処理開始: {filename}")
+            
+            # ファイルを読み込み
+            if file_path and os.path.exists(file_path):
+                # パスから直接アップロード
+                return await self.upload_file_to_vector_store(
+                    vector_store_id=vector_store_id,
+                    file_path=file_path
+                )
+            elif hasattr(element, 'content'):
+                # バイトデータからアップロード
+                return await self.upload_file_to_vector_store(
+                    vector_store_id=vector_store_id,
+                    file_bytes=element.content,
+                    filename=filename
+                )
+            else:
+                print(f"❌ ファイルの読み込みに失敗: {filename}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ ファイル処理エラー: {e}")
+            return None
     
     async def cleanup_session_vector_store(self):
         """セッション用ベクトルストアをクリーンアップ（3層目）"""

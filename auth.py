@@ -21,7 +21,7 @@ async def auth_callback(username: str, password: str) -> Optional[User]:
     load_dotenv()
     
     # 環境変数からパスワードを取得
-    auth_secret = os.getenv("CHAINLIT_AUTH_SECRET", "admin123")
+    auth_secret = os.getenv("ADMIN_PASSWORD", "admin123")
     
     # シンプルな認証（本番環境ではより安全な方法を使用してください）
     # デフォルト: ユーザー名 "admin" とパスワードは環境変数から

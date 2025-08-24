@@ -1,5 +1,50 @@
 # 修正履歴
 
+## 2025-08-24
+
+### 仕様書の大幅更新とAPI名称の明確化
+
+#### 1. 仕様書の更新（v1.2）
+- **ファイル**: `1.2_Chainlit_多機能AIワークスペース_アプリケーション仕様書_更新版.md`を新規作成
+- **内容**:
+  - 現在の実装状態を正確に反映
+  - Phase 1-7の実装状況を明記
+  - Phase 8-12の未実装機能を明確化
+  - 技術的課題と改善計画を詳細化
+  - アーキテクチャの現状と推奨構成を記載
+
+#### 2. API名称の混乱防止ガイド作成
+- **ファイル**: `docs/API_CLARIFICATION.md`を新規作成
+- **目的**: 「Responses API」に関する混乱を防止
+- **重要な明確化**:
+  - 「Responses API」は独立したAPIエンドポイントではない
+  - Chat Completions APIのツール機能として実装されている
+  - `client.responses.create()`メソッドは存在しない
+  - OpenAIの2024年12月発表の新機能は正式にサポートされている
+
+#### 3. responses_handler.pyのコメント更新
+- **理由**: API名称の混乱を防ぐため
+- **変更内容**: ファイル冒頭のコメントを明確化
+  - ファイル名は歴史的理由で「responses_handler」
+  - 実際はChat Completions APIのツール機能を管理
+  - docs/API_CLARIFICATION.mdへの参照を追加
+
+#### 4. 今後の議論防止策
+- API名称に関する議論が発生した場合は`docs/API_CLARIFICATION.md`を参照
+- コードレビュー時の確認事項を明文化
+- 新規開発者向けのオンボーディング資料として活用
+
+# 修正履歴
+
+## 2025-08-22
+### ベクトルストアAPIアクセスエラーの修正  
+- **問題**: `'AsyncBeta' object has no attribute 'vector_stores'`エラーが発生
+- **原因**: `vector_store_handler.py`でResponses API形式（`client.vector_stores`）を使用しようとしたが、実際はBeta API（`client.beta.vector_stores`）を使用する必要がある
+- **修正内容**:  
+  - `utils/vector_store_handler.py`のcreate_vector_storeメソッドで最初からBeta APIを使用するように修正
+  - AttributeErrorでのフォールバック処理を改善
+  - OpenAI SDKではベクトルストアAPIはまだBeta APIの一部であることを明確化
+
 ## 2025-08-19
 - ベクトルストア管理を簡素化
   - ウィジェットはベクトルストアIDのカンマ区切り入力のみ
@@ -692,3 +737,162 @@
     - file_searchツールの構造を`{"type": "file_search", "vector_store_ids": [...]}`に修正
   - `app.py`の`on_message`関数でtools_enabledの判定を修正
     - `tools_enabled = tools_config.is_enabled() or tools_config.is_tool_enabled("file_search")`に変更
+
+# 修正履歴
+
+## 2025-08-22
+
+### ファイルアップロード処理をベクトルストア中心に統一
+- **要望**: ファイルアップロードを`client.files.create()`ではなく、ベクトルストア経由で一元管理
+- **修正ファイル**:
+  - `utils/vector_store_handler.py`: 統合アップロードメソッドを追加
+  - `utils/auto_vector_store_manager.py`: ファイル処理を変更
+  - `app.py`: uploaded_files参照を削除、VSからファイル取得- **修正内容**:
+  - ベクトルストア作成を必須にしてファイル管理を一元化
+  - file_batchesを使用してファイルアップロードとVS追加を統合
+  - uploaded_filesセッション変数を廃止
+  - show_knowledge_base()でVSから直接ファイル情報取得
+
+## 2025-08-21
+
+### ベクトルストアID管理とfile_searchツールの改善
+- **問題**: VS IDが正しくセッションに保存されず、file_searchツールが動作しない
+- **修正ファイル**:
+  - `app.py`: セッションに複数のキーでVS IDを保存（互換性向上）
+  - `utils/tools_config.py`: VS ID取得ロジックを強化、IDが存在しない場合はツールをスキップ
+- **修正内容**:
+  - セッションに`vector_store_ids`辞書と個別キーの両方でID保存
+  - VS ID取得時に複数の方法で試行（フォールバック処理）
+  - VS IDが空の場合はfile_searchツールを追加しないよう修正
+  - デバッグログを強化してVS ID取得過程を可視化
+
+## 2025-08-21
+
+### ベクトルストア参照ログとソース表示機能の追加
+- **修正ファイル**: `utils/responses_handler.py`
+- **追加機能**:
+  - ベクトルストア参照時に1-3層のどの層が参照されたかをログ出力
+  - Web検索時の検索クエリとソース情報をログ出力
+  - ファイル検索結果にベクトルストアIDとソース情報を含める
+- **インポート追加**: `logger`と`vector_store_handler`を追加
+
+### `/kb` コマンドでのKeyError修正
+- **問題**: `show_knowledge_base()`関数で`file_info['filename']`へのアクセス時にKeyError発生
+- **原因**: uploaded_filesリストのオブジェクトに'filename'キーが存在しない
+- **修正内容**:
+  - キーの存在を確認してからアクセスするように変更
+  - get()メソッドを使用してデフォルト値を設定
+  - デバッグログを追加してデータ構造を確認可能に
+  - file_idの長さチェックを追加してインデックスエラーを防止
+
+### Cancel Scopeエラーの修正とデバッグ機能強化
+- **問題**: `Attempted to exit a cancel scope that isn't the current tasks's current cancel scope`エラー
+- **原因**: async generatorの不適切なクリーンアップ処理
+- **修正内容**:
+  - asyncio.CancelledErrorとGeneratorExitを適切に処理
+  - response_streamのクリーンアップ処理を追加
+  - finallyブロックでリソースを確実に解放
+  - 詳細なデバッグログを追加
+  - エラートレースバック出力を追加
+
+### セッションVS削除問題の修正
+- **問題**: 履歴削除時にセッションVS（第三層）が削除されない
+- **原因**: スレッドへのvector_store_id紐付けが正しく動作していない
+- **修正ファイル**:
+  - `utils/auto_vector_store_manager.py`: スレッドID取得とVS紐付けのデバッグ情報追加
+  - `data_layer.py`: delete_threadメソッドにデバッグ情報追加
+- **修正内容**:
+  - thread_id取得ロジックの改善
+  - update_thread_vector_storeメソッドのエラーハンドリング強化
+  - update_threadメソッドへのフォールバック処理追加
+  - 詳細なデバッグログを追加して問題の特定を容易に
+
+### スレッドID取得改善とVS紐付け強化
+- **修正ファイル**:
+  - `utils/auto_vector_store_manager.py`: スレッドID取得ロジックを強化
+  - `app.py`: on_messageハンドラーでスレッドIDをセッションに保存
+- **修正内容**:
+  - セッションIDをスレッドIDとして使用するフォールバック追加
+  - スレッドが存在しない場合は作成時にVS IDを設定
+  - エラーハンドリングとトレースバック出力追加
+
+### WebSocket接続エラーのデバッグ機能追加
+- **問題**: `ConnectionResetError: [WinError 10054]` Windows環境でWebSocket接続切断時に発生
+- **修正ファイル**:
+  - `utils/connection_handler.py`: WebSocket接続モニターを新規作成
+  - `app.py`: 接続モニターを統合、on_chat_start/endにログ追加
+- **追加機能**:
+  - WebSocket接続の監視とデバッグログ
+  - Windows ProactorEventLoop対策
+  - 接続状態の追跡とエラー履歴記録
+  - /statusコマンドで接続状態表示
+
+### ベクトルストアエラーのデバッグ機能強化（2025-08-21）
+- **問題**: `Vector store with id ['vs_...` エラーメッセージが途中で切れて原因不明
+- **修正ファイル**: `utils/vector_store_handler.py`
+- **修正内容**:
+  - get_vector_store_info関数にIDの型チェック追加（リスト形式で渡される場合の対処）
+  - エラー時の詳細情報出力（エラーの型、詳細、トレースバック）
+  - Beta APIフォールバック時のログ追加
+  - IDがリストで渡された場合は最初の要素を使用
+
+## 2025-08-21（エンコーディングエラー修正）
+
+### Windows環境でのCP932エンコーディングエラー修正
+- **問題**: `UnicodeEncodeError: 'cp932' codec can't encode character '\u2705'`
+- **原因**: Windows環境でCP932（Windows日本語コードページ）が絵文字を処理できない
+- **修正ファイル**:
+  - `utils/connection_handler.py`: 絵文字を[TAG]形式に変更、UTF-8エンコーディングを強制
+  - `app.py`: 絵文字を[TAG]形式に変更
+- **修正内容**:
+  - すべての絵文字を[SUCCESS]、[ERROR]、[WARNING]等のタグに置換
+  - Windows環境でstdout/stderrをUTF-8でラップ
+  - ファイルハンドラーにUTF-8エンコーディングを指定
+
+### ベクトルストアAPIアクセスエラー修正
+- **問題**: `'AsyncBeta' object has no attribute 'vector_stores'`
+- **原因**: OpenAI SDKのバージョンによるBeta APIアクセス方法の違い
+- **修正ファイル**:
+  - `utils/vector_store_handler.py`: APIヘルパーを使用するように修正
+  - `utils/auto_vector_store_manager.py`: APIヘルパーをインポート
+- **修正内容**:
+  - `vector_store_api_helper.py`のヘルパー関数を使用してSDKバージョンの違いを吸収
+  - 直接`self.async_client.beta.vector_stores`ではなく、`get_vector_store_api()`を使用
+  - エラーハンドリングとスタックトレース追加
+
+### セッションID表示機能追加
+- **要件**: チャット開始時と`/status`コマンドでセッションIDを表示
+- **修正ファイル**: `app.py`
+- **修正内容**:
+  - `on_chat_start`関数でセッションIDとスレッドIDを取得して表示
+  - ウェルカムメッセージにセッション情報セクションを追加
+  - `/status`コマンドでもセッション情報を表示
+
+## 2025-08-22（履歴削除時のベクトルストア削除修正）
+
+### 問題: 履歴削除時にベクトルストアが削除されない
+- **原因**: `data_layer.py`にdelete_threadメソッドが2つ定義されており、競合している
+- **修正ファイル**: `data_layer.py`
+- **修正内容**:
+  - 重複していた最初のdelete_threadメソッドを削除
+  - 残したdelete_threadメソッドに詳細なデバッグログを追加
+  - OpenAIクライアント初期化チェックと再初期化処理を追加
+  - ベクトルストア情報の取得と削除処理のエラーハンドリング強化
+  - 各削除操作の件数をログ出力
+
+## 2025-08-23（/kbコマンド廃止）
+
+### /kbコマンドを廃止して/vsコマンドへ統合
+- **問題**: /kbコマンドが動作しない、ベクトルストアが表示されない
+- **原因**: 旧実装が残っており、ファイルアップロード機能がベクトルストアに統合されたため
+- **修正ファイル**: `app.py`
+- **修正内容**:
+  - `/kb`コマンドを廃止し、/vsコマンドへのリダイレクトメッセージを表示
+  - ウェルカムメッセージから/kbコマンドの記載を削除
+  - ファイル管理は全て/vsコマンドで統一
+
+## 2025-08-22（セッションID全文表示）
+
+### セッションIDとスレッドIDの全文表示
+- **修正ファイル**: `app.py`
+- **修正内容**: ウェルカムメッセージでセッションIDとスレッドIDを短縮表示から全文表示に変更
