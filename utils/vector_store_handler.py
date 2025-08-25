@@ -1,23 +1,26 @@
 """
-ベクトルストア管理モジュール（OpenAI Responses API対応版）
+ベクトルストア管理モジュール（統合版）
 Phase 7: OpenAI File Search APIを使った三層ナレッジベース管理
 
 ========================================================
-重要: OpenAI Responses APIのFile Search機能を使用
+統合版: すべてのベクトルストア機能を一元管理
 ========================================================
 
-参照ドキュメント:
-- F:\10_code\AI_Workspace_App_Chainlit\openai_responseAPI_reference\openai responseAPI reference (File search).md
-
 三層のベクトルストア構造:
-1. 会社全体（Company） - 共有ナレッジベース（読み取り専用）
-2. 個人ユーザー（Personal） - 個人用ナレッジベース
-3. チャット単位（Session） - 一時的なナレッジベース
+1. 会社全体（Company） - 共有ナレッジベース（.envから読み込み）
+2. 個人ユーザー（Personal） - 個人用ナレッジベース（DBに永続化）
+3. セッション（Session） - 一時的なナレッジベース（メモリ内）
 
-実装方針:
-- OpenAI Responses APIのvector_stores.create()を使用（betaではない）
-- File Search機能による高精度な検索
-- 動的なベクトルストアID管理
+実装機能:
+- OpenAI Assistant APIのbeta.vector_stores を使用
+- 各階層のベクトルストアを適切に管理
+- セキュアな所有者管理機能
+- 自動削除機能（24時間後）
+- GUI管理機能のサポート
+- 単一のインターフェースで全階層にアクセス可能
+
+変更履歴:
+- 2025-08-25: 重複実装を統合、セキュリティ機能と自動管理機能を統合
 """
 
 import os
@@ -25,10 +28,11 @@ import json
 from typing import Dict, List, Optional, Tuple, Any
 from openai import OpenAI, AsyncOpenAI
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import aiofiles
 import mimetypes
 from pathlib import Path
+import chainlit as cl
 from utils.vector_store_api_helper import (
     get_vector_store_api,
     get_vector_store_files_api,
@@ -41,7 +45,15 @@ from utils.vector_store_api_helper import (
 
 
 class VectorStoreHandler:
-    """ベクトルストア管理クラス（Responses API対応）"""
+    """ベクトルストア管理クラス（統合版）
+    
+    このクラスは以下の機能を統合:
+    - 3階層のベクトルストア管理（会社全体、個人、セッション）
+    - セキュアな所有者管理
+    - 自動削除機能
+    - GUI管理機能
+    - Responses API対応
+    """
     
     # サポートされるファイル形式（公式ドキュメント準拠）
     SUPPORTED_FILE_TYPES = {
@@ -80,8 +92,26 @@ class VectorStoreHandler:
         
         # 三層のベクトルストアID管理
         self.company_vs_id = os.getenv("COMPANY_VECTOR_STORE_ID", "")  # 1層目: 社内共有
-        self.personal_vs_id = None  # 2層目: 個人用
-        self.session_vs_id = None   # 3層目: セッション用（一時的）
+        self.personal_vs_ids = {}  # 2層目: 個人用（ユーザーIDをキーとした辞書）
+        self.session_vs_ids = {}   # 3層目: セッション用（セッションIDをキーとした辞書）
+        
+        # 管理用キャッシュ
+        self._ownership_cache = {}  # VSの所有者情報をキャッシュ
+        self._session_vs_cache = {}  # セッションVSのキャッシュ
+        self._user_preferences = {}  # ユーザー設定のキャッシュ
+        
+        # 自動削除設定
+        self.auto_delete_hours = 24  # 24時間後に自動削除
+        
+        # ローカル管理用ディレクトリ（v2互換）
+        self.vs_dir = ".chainlit/vector_stores"
+        self.files_dir = ".chainlit/vector_store_files"
+        self._ensure_directories()
+    
+    def _ensure_directories(self):
+        """必要なディレクトリを作成"""
+        os.makedirs(self.vs_dir, exist_ok=True)
+        os.makedirs(self.files_dir, exist_ok=True)
     
     def _init_clients(self):
         """OpenAIクライアントを初期化"""
@@ -1031,6 +1061,390 @@ class VectorStoreHandler:
                 print("✅ セッション用ベクトルストアをクリーンアップしました")
             except Exception as e:
                 print(f"⚠️ セッション用ベクトルストアのクリーンアップに失敗: {e}")
+    
+    def set_layer_vector_store(self, layer: str, vs_id: str):
+        """
+        特定の階層のベクトルストアIDを設定
+        
+        Args:
+            layer: 階層名 ("company", "personal", "session")
+            vs_id: ベクトルストアID
+        """
+        if layer == "company":
+            self.company_vs_id = vs_id
+        elif layer == "personal":
+            self.personal_vs_id = vs_id
+        elif layer == "session":
+            self.session_vs_id = vs_id
+        else:
+            print(f"⚠️ 不明な階層: {layer}")
+    
+    def get_layer_vector_store(self, layer: str) -> Optional[str]:
+        """
+        特定の階層のベクトルストアIDを取得
+        
+        Args:
+            layer: 階層名 ("company", "personal", "session")
+        
+        Returns:
+            ベクトルストアID
+        """
+        if layer == "company":
+            return self.company_vs_id
+        elif layer == "personal":
+            return self.personal_vs_id
+        elif layer == "session":
+            return self.session_vs_id
+        else:
+            return None
+    
+    async def initialize_from_session(self, session_data: Dict):
+        """
+        セッションデータから3階層のベクトルストアIDを初期化
+        
+        Args:
+            session_data: セッション情報を含む辞書
+        """
+        # 会社全体VSは.envから既に読み込まれている
+        
+        # 個人VSをセッションから取得
+        if "personal_vs_id" in session_data and session_data["personal_vs_id"]:
+            self.personal_vs_id = session_data["personal_vs_id"]
+            print(f"✅ 個人ベクトルストアを設定: {self.personal_vs_id}")
+        
+        # セッションVSを取得（複数のキーを確認）
+        session_vs_id = (
+            session_data.get("session_vs_id") or
+            session_data.get("thread_vs_id") or
+            session_data.get("vector_store_ids", {}).get("session")
+        )
+        if session_vs_id:
+            self.session_vs_id = session_vs_id
+            print(f"✅ セッションベクトルストアを設定: {self.session_vs_id}")
+    
+    async def get_or_create_layer_store(self, layer: str, identifier: str = None) -> Optional[str]:
+        """
+        指定階層のベクトルストアを取得または作成
+        
+        Args:
+            layer: 階層名 ("company", "personal", "session")
+            identifier: ユーザーIDまたはセッションID
+        
+        Returns:
+            ベクトルストアID
+        """
+        if layer == "company":
+            # 会社VSは.envから読み込み（作成しない）
+            return self.company_vs_id
+        
+        elif layer == "personal":
+            if identifier in self.personal_vs_ids:
+                return self.personal_vs_ids[identifier]
+            elif self.personal_vs_id:  # 互換性のため
+                return self.personal_vs_id
+            elif identifier:
+                # 新規作成
+                vs_id = await self.create_personal_vector_store_with_ownership(identifier)
+                if vs_id:
+                    self.personal_vs_ids[identifier] = vs_id
+                    self.personal_vs_id = vs_id  # 互換性のため
+                return vs_id
+            else:
+                print("⚠️ 個人VSの作成にはユーザーIDが必要です")
+                return None
+        
+        elif layer == "session":
+            cache_key = f"{identifier}" if identifier else "default"
+            if cache_key in self.session_vs_ids:
+                return self.session_vs_ids[cache_key]
+            elif self.session_vs_id:  # 互換性のため
+                return self.session_vs_id
+            elif identifier:
+                # 新規作成
+                vs_id = await self.create_session_vector_store_with_auto_delete(identifier)
+                if vs_id:
+                    self.session_vs_ids[cache_key] = vs_id
+                    self.session_vs_id = vs_id  # 互換性のため
+                return vs_id
+            else:
+                print("⚠️ セッションVSの作成にはセッションIDが必要です")
+                return None
+        
+        return None
+    
+    async def create_personal_vector_store_with_ownership(self, user_id: str, name: str = None, 
+                                          category: str = None) -> Optional[str]:
+        """
+        個人用ベクトルストアを作成（所有者情報付き）
+        
+        Args:
+            user_id: ユーザーID
+            name: ベクトルストア名
+            category: カテゴリ
+        
+        Returns:
+            作成されたベクトルストアID
+        """
+        try:
+            if not name:
+                name = f"Personal KB - {user_id} - {datetime.now().strftime('%Y%m%d_%H%M')}"
+            
+            # メタデータに所有者情報を含める
+            metadata = {
+                "owner_id": user_id,
+                "category": category or "personal",
+                "created_at": datetime.now().isoformat(),
+                "type": "personal"
+            }
+            
+            # APIヘルパーを使用してベクトルストアを作成
+            vs_api = get_vector_store_api(self.async_client)
+            if not vs_api:
+                print("❌ ベクトルストアAPIが利用できません")
+                return None
+            
+            vector_store = await vs_api.create(
+                name=name,
+                metadata=metadata
+            )
+            
+            # 所有者情報をキャッシュ
+            self._ownership_cache[vector_store.id] = user_id
+            
+            print(f"✅ 個人用ベクトルストア作成（所有者付き）: {vector_store.id}")
+            return vector_store.id
+            
+        except Exception as e:
+            print(f"❌ 個人用ベクトルストア作成エラー: {e}")
+            return None
+    
+    async def create_session_vector_store_with_auto_delete(self, session_id: str) -> Optional[str]:
+        """
+        セッション用ベクトルストアを作成（自動削除機能付き）
+        
+        Args:
+            session_id: セッションID
+        
+        Returns:
+            作成されたベクトルストアID
+        """
+        try:
+            name = f"Session VS - {session_id[:8]} - {datetime.now().strftime('%H%M')}"
+            
+            # メタデータに自動削除情報を含める
+            metadata = {
+                "session_id": session_id,
+                "type": "session",
+                "created_at": datetime.now().isoformat(),
+                "auto_delete_at": (datetime.now() + timedelta(hours=self.auto_delete_hours)).isoformat(),
+                "temporary": True
+            }
+            
+            # APIヘルパーを使用してベクトルストアを作成
+            vs_api = get_vector_store_api(self.async_client)
+            if not vs_api:
+                print("❌ ベクトルストアAPIが利用できません")
+                return None
+            
+            vector_store = await vs_api.create(
+                name=name,
+                metadata=metadata
+            )
+            
+            # セッションキャッシュに保存
+            cache_key = f"session:{session_id}"
+            self._session_vs_cache[cache_key] = {
+                "vs_id": vector_store.id,
+                "created_at": datetime.now(),
+                "auto_delete_at": datetime.now() + timedelta(hours=self.auto_delete_hours)
+            }
+            
+            print(f"✅ セッション用ベクトルストア作成（自動削除付き）: {vector_store.id}")
+            return vector_store.id
+            
+        except Exception as e:
+            print(f"❌ セッション用ベクトルストア作成エラー: {e}")
+            return None
+    
+    async def check_ownership(self, vs_id: str, user_id: str) -> bool:
+        """
+        ベクトルストアの所有権を確認
+        
+        Args:
+            vs_id: ベクトルストアID
+            user_id: ユーザーID
+        
+        Returns:
+            所有者かどうか
+        """
+        try:
+            # キャッシュを確認
+            if vs_id in self._ownership_cache:
+                return self._ownership_cache[vs_id] == user_id
+            
+            # APIから情報を取得
+            vs_info = await self.get_vector_store_info(vs_id)
+            if not vs_info:
+                return False
+            
+            # メタデータから所有者情報を取得
+            metadata = vs_info.get("metadata", {})
+            owner_id = metadata.get("owner_id")
+            
+            # キャッシュに保存
+            if owner_id:
+                self._ownership_cache[vs_id] = owner_id
+            
+            return owner_id == user_id
+            
+        except Exception as e:
+            print(f"❌ 所有権確認エラー: {e}")
+            return False
+    
+    async def cleanup_expired_session_stores(self):
+        """
+        期限切れのセッションベクトルストアを自動削除
+        """
+        try:
+            current_time = datetime.now()
+            expired_stores = []
+            
+            # 期限切れのストアを特定
+            for cache_key, cache_data in self._session_vs_cache.items():
+                if cache_data.get("auto_delete_at") and cache_data["auto_delete_at"] < current_time:
+                    expired_stores.append((cache_key, cache_data["vs_id"]))
+            
+            # 削除処理
+            for cache_key, vs_id in expired_stores:
+                try:
+                    await self.delete_vector_store(vs_id)
+                    del self._session_vs_cache[cache_key]
+                    print(f"🗑️ 期限切れセッションVSを自動削除: {vs_id}")
+                except Exception as e:
+                    print(f"⚠️ セッションVS削除失敗: {vs_id} - {e}")
+            
+            if expired_stores:
+                print(f"✅ {len(expired_stores)}個の期限切れセッションVSを削除しました")
+                
+        except Exception as e:
+            print(f"❌ 自動削除処理エラー: {e}")
+    
+    def get_enabled_vector_store_ids(self, enabled_layers: Dict[str, bool] = None) -> List[str]:
+        """
+        有効な階層のベクトルストアIDリストを取得
+        
+        Args:
+            enabled_layers: 各階層の有効/無効設定
+                           例: {"company": True, "personal": True, "session": False}
+        
+        Returns:
+            有効なベクトルストアIDのリスト
+        """
+        if enabled_layers is None:
+            # デフォルトは全階層有効
+            enabled_layers = {"company": True, "personal": True, "session": True}
+        
+        ids = []
+        
+        # 1層目: 会社全体
+        if enabled_layers.get("company", True) and self.company_vs_id:
+            ids.append(self.company_vs_id)
+        
+        # 2層目: 個人ユーザー
+        if enabled_layers.get("personal", True) and self.personal_vs_id:
+            ids.append(self.personal_vs_id)
+        
+        # 3層目: セッション
+        if enabled_layers.get("session", True) and self.session_vs_id:
+            ids.append(self.session_vs_id)
+        
+        return ids
+
+
+    # データベース連携メソッド（互換性のため）
+    async def get_user_vector_store_from_db(self, user_id: str) -> Optional[str]:
+        """
+        データベースからユーザーのベクトルストアIDを取得
+        
+        Args:
+            user_id: ユーザーID
+        
+        Returns:
+            ベクトルストアID
+        """
+        try:
+            # まずキャッシュを確認
+            if user_id in self.personal_vs_ids:
+                return self.personal_vs_ids[user_id]
+            
+            # data_layerから取得を試みる
+            import chainlit.data as cl_data
+            data_layer_instance = cl_data._data_layer
+            
+            if data_layer_instance and hasattr(data_layer_instance, 'get_user_vector_store_id'):
+                vs_id = await data_layer_instance.get_user_vector_store_id(user_id)
+                if vs_id:
+                    self.personal_vs_ids[user_id] = vs_id
+                    self.personal_vs_id = vs_id  # 互換性のため
+                return vs_id
+            
+            return None
+            
+        except Exception as e:
+            print(f"❌ DBからのベクトルストアID取得エラー: {e}")
+            return None
+    
+    async def set_user_vector_store_in_db(self, user_id: str, vs_id: str) -> bool:
+        """
+        データベースにユーザーのベクトルストアIDを保存
+        
+        Args:
+            user_id: ユーザーID
+            vs_id: ベクトルストアID
+        
+        Returns:
+            成功/失敗
+        """
+        try:
+            # キャッシュに保存
+            self.personal_vs_ids[user_id] = vs_id
+            self.personal_vs_id = vs_id  # 互換性のため
+            
+            # data_layerに保存を試みる
+            import chainlit.data as cl_data
+            data_layer_instance = cl_data._data_layer
+            
+            if data_layer_instance and hasattr(data_layer_instance, 'set_user_vector_store_id'):
+                await data_layer_instance.set_user_vector_store_id(user_id, vs_id)
+                return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"❌ DBへのベクトルストアID保存エラー: {e}")
+            return False
+    
+    def get_all_active_vector_store_ids(self) -> List[str]:
+        """
+        すべてのアクティブなベクトルストアIDを取得（全階層）
+        
+        Returns:
+            ベクトルストアIDのリスト
+        """
+        ids = []
+        
+        # 1層目: 会社全体
+        if self.company_vs_id:
+            ids.append(self.company_vs_id)
+        
+        # 2層目: すべての個人ユーザー
+        ids.extend(self.personal_vs_ids.values())
+        
+        # 3層目: すべてのセッション
+        ids.extend(self.session_vs_ids.values())
+        
+        # 重複を除去
+        return list(set(ids))
 
 
 # グローバルインスタンス
