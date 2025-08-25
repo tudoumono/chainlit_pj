@@ -1,28 +1,25 @@
 """
-Chat Completions API with Tools管理モジュール
+OpenAI Responses API管理モジュール
 
 ========================================================
-重要：API名称の明確化
+重要：正しいResponses APIの実装
 ========================================================
 
-このファイルは歴史的理由で"responses_handler"という名前ですが、
-実際はChat Completions APIのツール機能を管理しています。
+このファイルはOpenAI Responses APIを正しく実装しています。
 
-OpenAIは2024年12月に新しいツール機能を発表しました：
-- マーケティング名："Responses API"
-- 技術的実装：Chat Completions APIの拡張
-- Python SDK：client.chat.completions.create()メソッドを使用
-
-詳細は docs/API_CLARIFICATION.md を参照してください。
+OpenAIは2024年12月に新しいResponses APIを発表しました：
+- エンドポイント：/v1/responses
+- Python SDK：client.responses.create()メソッドを使用
+- 主な機能：web_search、file_search、stateful conversation
 
 ========================================================
 機能概要
 ========================================================
 
-- Chat Completions APIの呼び出し
-- Tools機能（ファイル検索、コード実行）対応
+- Responses APIの呼び出し
+- Tools機能（Web検索、ファイル検索）対応
 - ストリーミング応答処理
-- メッセージ履歴管理
+- 会話の継続性（previous_response_id）
 - エラーハンドリング
 - ベクトルストア統合
 
@@ -31,22 +28,22 @@ OpenAIは2024年12月に新しいツール機能を発表しました：
 ========================================================
 
 公式ドキュメント:
-- Tools Documentation: https://platform.openai.com/docs/guides/tools
-- File Search Guide: https://platform.openai.com/docs/guides/tools-file-search
-- Chat Completions API: https://platform.openai.com/docs/api-reference/chat
+- Responses API Reference: https://platform.openai.com/docs/api-reference/responses
+- Web Search Example: https://cookbook.openai.com/examples/responses_api/responses_example
+- File Search Example: https://cookbook.openai.com/examples/file_search_responses
 
 ローカルドキュメント:
-- docs/API_CLARIFICATION.md - API名称の明確化
-- 1.2_Chainlit_多機能AIワークスペース_アプリケーション仕様書_更新版.md
+- docs/references/多機能AIワークスペース　開発リファレンスドキュメント.md
+- docs/implementation_status/02_実装の誤りと修正方針.md
 
 ========================================================
 実装上の注意
 ========================================================
 
-1. "Responses API"という独立したAPIエンドポイントは存在しません
-2. client.responses.create()メソッドは存在しません
-3. すべての機能はChat Completions APIを通じて利用します
-4. ベクトルストアはBeta APIを使用します（client.beta.vector_stores）
+1. Responses APIは正式なAPIエンドポイントです
+2. client.responses.create()メソッドが正しい使用方法です
+3. inputとinstructionsパラメータを使用します
+4. ベクトルストアはfile_searchツールで統合されます
 """
 
 import os
@@ -66,10 +63,14 @@ class ResponsesAPIHandler:
     OpenAI Responses API管理クラス
     
     このクラスはOpenAI SDKのResponses APIを使用してAI応答を生成します。
-    Responses APIが利用できない場合は、Chat Completions APIに自動的にフォールバックします。
+    Responses APIは2024年12月に発表された新しいAPIで、web_searchやfile_search、
+    stateful conversationなどの機能を提供します。
     
-    重要: OpenAI SDKはResponses APIを正式にサポートしています。
-    フォールバックは互換性のためのものであり、SDKの制限ではありません。
+    主な機能:
+    - Web検索ツール (web_search)
+    - ファイル検索ツール (file_search)
+    - 会話の継続性 (previous_response_id)
+    - ストリーミング応答
     """
     
     def __init__(self):
@@ -142,9 +143,9 @@ class ResponsesAPIHandler:
         """
         Responses APIを呼び出し（Tools機能対応）
         
-        重要: このメソッドはまずResponses APIを試み、利用できない場合のみ
-        Chat Completions APIにフォールバックします。これはSDKの仕様に基づく
-        正しい実装パターンです。
+        OpenAI Responses APIを使用してAI応答を生成します。
+        Web検索、ファイル検索、stateful conversationなどの
+        機能をサポートします。
         
         参照:
         - https://platform.openai.com/docs/api-reference/responses
@@ -158,6 +159,7 @@ class ResponsesAPIHandler:
             stream: ストリーミング有効/無効
             use_tools: Tools機能を使用するか
             tool_choice: ツール選択設定
+            previous_response_id: 会話継続用ID
             session: Chainlitセッション情報
             **kwargs: その他のパラメータ
         
@@ -174,46 +176,44 @@ class ResponsesAPIHandler:
         model = model or self.default_model
         
         # メッセージ履歴から入力とシステムプロンプトを抽出
-        input_content = None
-        instructions = None
+        input_content = ""
+        instructions = ""
         
         # 最新のユーザーメッセージを取得
         for msg in reversed(messages):
             if msg.get("role") == "user":
-                input_content = msg.get("content")
+                input_content = msg.get("content", "")
                 break
         
         # システムプロンプトを取得
         for msg in messages:
             if msg.get("role") == "system":
-                instructions = msg.get("content")
+                instructions = msg.get("content", "")
                 break
+        
+        # アシスタントのメッセージを会話のコンテキストとして含める
+        if not input_content and messages:
+            # ユーザーメッセージがない場合、全体をinputとして使用
+            conversation_parts = []
+            for msg in messages:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role != "system" and content:
+                    conversation_parts.append(f"{role}: {content}")
+            input_content = "\n".join(conversation_parts)
         
         # Responses APIパラメータを構築
         response_params = {
             "model": model,
+            "input": input_content,
             "temperature": temperature,
             "stream": stream,
             **kwargs
         }
         
-        # inputパラメータを設定（メッセージまたは文字列）
-        if messages:
-            # 最新のユーザーメッセージを取得するか、全メッセージを送信
-            if len(messages) == 1 and messages[0].get("role") == "user":
-                response_params["input"] = messages[0].get("content")
-            else:
-                # メッセージ配列として送信
-                response_params["input"] = messages
-        
         # instructionsを設定（システムプロンプト）
-        for msg in messages:
-            if msg.get("role") == "system":
-                response_params["instructions"] = msg.get("content")
-                # システムメッセージをinputから除外
-                if isinstance(response_params.get("input"), list):
-                    response_params["input"] = [m for m in response_params["input"] if m.get("role") != "system"]
-                break
+        if instructions:
+            response_params["instructions"] = instructions
         
         # 会話継続用のresponse_id
         if previous_response_id:
@@ -223,11 +223,28 @@ class ResponsesAPIHandler:
             response_params["max_tokens"] = max_tokens
         
         # Tools機能の設定
+        tools = []
         if use_tools and self.tools_config.is_enabled():
-            tools = self.tools_config.build_tools_parameter(session)  # セッションを渡す
-            if tools:
-                response_params["tools"] = tools
-                response_params["tool_choice"] = tool_choice or "auto"
+            # Web検索ツール
+            if self.tools_config.get_setting("web_search_enabled", False):
+                tools.append({
+                    "type": "web_search",
+                    "enabled": True
+                })
+            
+            # ファイル検索ツール（ベクトルストア）
+            if self.tools_config.get_setting("file_search_enabled", False):
+                vector_store_ids = vector_store_handler.get_active_vector_store_ids()
+                if vector_store_ids:
+                    tools.append({
+                        "type": "file_search",
+                        "file_search": {
+                            "vector_store_ids": vector_store_ids
+                        }
+                    })
+        
+        if tools:
+            response_params["tools"] = tools
         
         # デバッグログを追加
         app_logger.debug(f"🔧 create_response開始", 
@@ -239,79 +256,45 @@ class ResponsesAPIHandler:
         response_stream = None
         try:
             # ========================================================
-            # Responses APIを試す
-            # 重要: OpenAI SDKはResponses APIを正式にサポートしています
+            # Responses APIを呼び出し
+            # OpenAI SDKはResponses APIを正式にサポートしています
             # 参照: https://platform.openai.com/docs/api-reference/responses
             # ========================================================
-            try:
-                app_logger.debug("🔧 Responses API呼び出しを試行中...")
-                response = await self.async_client.responses.create(**response_params)
-                
-                # ストリーミングモード
-                if stream:
-                    app_logger.debug("🔧 Responses APIストリーミングモード")
-                    async for event in response:
-                        yield self._process_response_stream_event(event)
-                # 非ストリーミングモード
-                else:
-                    app_logger.debug("🔧 Responses API非ストリーミングモード")
-                    yield self._process_response_output(response)
+            app_logger.debug("🔧 Responses API呼び出し")
+            app_logger.debug(f"  Model: {model}")
+            app_logger.debug(f"  Input: {input_content[:100]}..." if len(input_content) > 100 else f"  Input: {input_content}")
+            app_logger.debug(f"  Instructions: {instructions[:100]}..." if len(instructions) > 100 else f"  Instructions: {instructions}")
+            app_logger.debug(f"  Tools: {len(tools)} tools enabled" if tools else "  Tools: None")
             
-            except AttributeError as e:
-                app_logger.debug(f"⚠️ Responses APIが利用不可: {e}")
-                app_logger.debug("🔧 Chat Completions APIにフォールバック")
-                # ========================================================
-                # Responses APIが利用できない場合、Chat Completions APIにフォールバック
-                # 注意: これはSDKのバージョンやインストール状況によるものです
-                # OpenAI SDKは正式にResponses APIをサポートしています
-                # ========================================================
-                chat_params = {
-                    "model": model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "stream": stream,
-                    **kwargs
-                }
-                
-                if max_tokens:
-                    chat_params["max_tokens"] = max_tokens
-                
-                # Tools機能の設定
-                if use_tools and self.tools_config.is_enabled():
-                    tools = self.tools_config.build_tools_parameter(session)  # セッションを渡す
-                    if tools:
-                        chat_params["tools"] = tools
-                        chat_params["tool_choice"] = tool_choice or "auto"
-                
-                response_stream = await self.async_client.chat.completions.create(**chat_params)
-                
-                # ストリーミングモード
-                if stream:
-                    app_logger.debug("🔧 Chat Completions APIストリーミングモード開始")
-                    try:
-                        async for chunk in response_stream:
-                            if chunk:  # chunkがNoneでないことを確認
-                                yield self._process_stream_chunk(chunk)
-                    except asyncio.CancelledError:
-                        app_logger.debug("⚠️ ストリーミングがキャンセルされました")
-                        # Cancelled Errorは正常な終了として扱う
-                        return
-                    except GeneratorExit:
-                        app_logger.debug("⚠️ ジェネレーターが終了しました")
-                        # GeneratorExitも正常な終了として扱う
-                        return
-                    finally:
-                        app_logger.debug("🔧 ストリーミング終了処理")
-                        # response_streamのクリーンアップ
-                        if response_stream and hasattr(response_stream, 'aclose'):
-                            try:
-                                await response_stream.aclose()
-                            except Exception as cleanup_error:
-                                app_logger.debug(f"⚠️ クリーンアップエラー: {cleanup_error}")
-                # 非ストリーミングモード
-                else:
-                    app_logger.debug("🔧 Chat Completions API非ストリーミングモード")
-                    yield self._process_response(response_stream)
+            response = await self.async_client.responses.create(**response_params)
+            
+            # ストリーミングモード
+            if stream:
+                app_logger.debug("🔧 Responses APIストリーミングモード")
+                try:
+                    async for event in response:
+                        if event:  # eventがNoneでないことを確認
+                            yield self._process_response_stream_event(event)
+                except asyncio.CancelledError:
+                    app_logger.debug("⚠️ ストリーミングがキャンセルされました")
+                    # Cancelled Errorは正常な終了として扱う
+                    return
+                except GeneratorExit:
+                    app_logger.debug("⚠️ ジェネレーターが終了しました")
+                    # GeneratorExitも正常な終了として扱う
+                    return
+                finally:
+                    app_logger.debug("🔧 ストリーミング終了処理")
+                    # response_streamのクリーンアップ
+                    if response_stream and hasattr(response_stream, 'aclose'):
+                        try:
+                            await response_stream.aclose()
+                        except Exception as cleanup_error:
+                            app_logger.debug(f"⚠️ クリーンアップエラー: {cleanup_error}")
+            # 非ストリーミングモード
+            else:
+                app_logger.debug("🔧 Responses API非ストリーミングモード")
+                yield self._process_response_output(response)
         
         except asyncio.CancelledError:
             app_logger.debug("⚠️ 処理がキャンセルされました")
@@ -436,25 +419,46 @@ class ResponsesAPIHandler:
         
         イベントタイプ:
         - response.output_text.delta: テキストのデルタ
+        - response.output.delta: 出力のデルタ
         - response.completed: 応答完了
+        - tool.call: ツール呼び出し
         - error: エラー
         """
         # イベントタイプに応じて処理
         event_type = getattr(event, 'type', None)
         
-        if event_type == 'response.output_text.delta':
+        if event_type == 'response.output_text.delta' or event_type == 'response.output.delta':
             # テキストデルタイベント
+            delta_content = ""
+            if hasattr(event, 'delta'):
+                delta_content = event.delta
+            elif hasattr(event, 'output_text_delta'):
+                delta_content = event.output_text_delta
+            
             return {
                 "type": "text_delta",
-                "content": event.delta if hasattr(event, 'delta') else "",
+                "content": delta_content,
                 "id": event.id if hasattr(event, 'id') else None
             }
         elif event_type == 'response.completed':
             # 完了イベント
+            output_text = ""
+            if hasattr(event, 'output_text'):
+                output_text = event.output_text
+            elif hasattr(event, 'response') and hasattr(event.response, 'output_text'):
+                output_text = event.response.output_text
+            
             return {
                 "type": "response_complete",
                 "id": event.response_id if hasattr(event, 'response_id') else None,
-                "output_text": event.output_text if hasattr(event, 'output_text') else ""
+                "output_text": output_text
+            }
+        elif event_type == 'tool.call':
+            # ツール呼び出しイベント
+            return {
+                "type": "tool_call",
+                "tool_type": event.tool_type if hasattr(event, 'tool_type') else None,
+                "data": event.data if hasattr(event, 'data') else None
             }
         elif event_type == 'error':
             # エラーイベント
@@ -812,35 +816,39 @@ class ResponsesAPIHandler:
             return f"Chat - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         
         try:
-            # タイトル生成用のプロンプト
-            title_prompt = [
-                {"role": "system", "content": "以下の会話から、短く簡潔なタイトルを日本語で生成してください。20文字以内で。"},
-                *messages[:3]  # 最初の3メッセージのみ使用
-            ]
+            # 会話内容を整形
+            conversation_context = "\n".join([
+                f"{m['role']}: {m['content'][:100]}" 
+                for m in messages[:3] 
+                if m.get('content')
+            ])
             
-            # ツールを使わずにタイトル生成
-            # Responses APIを优先的に使用、失敗時はChat Completions APIにフォールバック
-            try:
-                # Responses APIを試す
-                response = await self.async_client.responses.create(
-                    model="gpt-4o-mini",
-                    input="以下の会話から、短く簡潔なタイトルを日本語で生成してください。20文字以内で。",
-                    instructions="\n".join([f"{m['role']}: {m['content']}" for m in messages[:3]]),
-                    temperature=0.5,
-                    max_tokens=30,
-                    stream=False
-                )
-                title = response.output_text.strip() if hasattr(response, 'output_text') else response.output.strip()
-            except (AttributeError, Exception) as e:
-                # Chat Completions APIにフォールバック
-                response = await self.async_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=title_prompt,
-                    temperature=0.5,
-                    max_tokens=30,
-                    stream=False
-                )
-                title = response.choices[0].message.content.strip()
+            # Responses APIを使用してタイトル生成
+            response = await self.async_client.responses.create(
+                model="gpt-4o-mini",
+                input=conversation_context,
+                instructions="この会話から、短く簡潔なタイトルを日本語で生成してください。20文字以内で、タイトルのみを出力してください。",
+                temperature=0.5,
+                max_tokens=30,
+                stream=False
+            )
+            
+            # レスポンスからタイトルを抽出
+            if hasattr(response, 'output_text'):
+                title = response.output_text.strip()
+            elif hasattr(response, 'output') and isinstance(response.output, list) and len(response.output) > 0:
+                # outputが配列の場合、最初のメッセージのcontentを取得
+                first_output = response.output[0]
+                if hasattr(first_output, 'content') and isinstance(first_output.content, list):
+                    for content_item in first_output.content:
+                        if hasattr(content_item, 'text'):
+                            title = content_item.text.strip()
+                            break
+                else:
+                    title = str(first_output).strip()
+            else:
+                title = "Untitled Chat"
+            
             # タイトルが長すぎる場合は切り詰め
             if len(title) > 30:
                 title = title[:27] + "..."
@@ -848,7 +856,7 @@ class ResponsesAPIHandler:
             return title
         
         except Exception as e:
-            print(f"Error generating title: {e}")
+            app_logger.error(f"Error generating title: {e}")
             return f"Chat - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     
     def format_token_usage(self, usage: Dict[str, int]) -> str:

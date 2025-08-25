@@ -765,6 +765,29 @@ class VectorStoreHandler:
         
         return stores
     
+    def get_active_vector_store_ids(self) -> List[str]:
+        """
+        アクティブなベクトルストアのIDリストを取得
+        
+        Returns:
+            ベクトルストアIDのリスト
+        """
+        ids = []
+        
+        # 1層目: 会社全体
+        if self.company_vs_id:
+            ids.append(self.company_vs_id)
+        
+        # 2層目: 個人ユーザー
+        if self.personal_vs_id:
+            ids.append(self.personal_vs_id)
+        
+        # 3層目: チャット単位
+        if self.session_vs_id:
+            ids.append(self.session_vs_id)
+        
+        return ids
+    
     def build_file_search_tool(self, vector_store_ids: List[str] = None) -> Dict:
         """
         file_searchツールを構築（Responses API準拠）
