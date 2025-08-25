@@ -2425,6 +2425,112 @@ async def show_status():
     await cl.Message(content=status_message, author="System").send()
 
 
+@cl.on_error
+async def on_error(exception: Exception) -> None:
+    """
+    グローバルエラーハンドラー
+    アプリケーション全体で発生したエラーを統一的に処理
+    
+    Args:
+        exception: 発生した例外
+    """
+    import traceback
+    from openai import OpenAIError, APIConnectionError, RateLimitError, AuthenticationError
+    
+    # エラーの詳細をログに記録
+    app_logger.error(f"❌ グローバルエラー: {exception}")
+    app_logger.debug(f"❌ エラートレースバック: {traceback.format_exc()}")
+    
+    # エラーの種類に応じてユーザーフレンドリーなメッセージを生成
+    error_message = ""
+    
+    # OpenAI API関連のエラー
+    if isinstance(exception, AuthenticationError):
+        error_message = (
+            "🔐 **認証エラー**\n\n"
+            "APIキーが無効または未設定です。\n\n"
+            "対処法:\n"
+            "1. `/setkey [APIキー]` コマンドでAPIキーを設定\n"
+            "2. OpenAIのダッシュボードでAPIキーの有効性を確認\n"
+            "3. APIキーの権限を確認"
+        )
+    elif isinstance(exception, RateLimitError):
+        error_message = (
+            "⏱️ **レート制限エラー**\n\n"
+            "API呼び出しの制限に達しました。\n\n"
+            "対処法:\n"
+            "1. しばらく待ってから再試行\n"
+            "2. OpenAIダッシュボードで利用制限を確認\n"
+            "3. 必要に応じて利用プランをアップグレード"
+        )
+    elif isinstance(exception, APIConnectionError):
+        error_message = (
+            "🌐 **接続エラー**\n\n"
+            "OpenAI APIに接続できません。\n\n"
+            "対処法:\n"
+            "1. インターネット接続を確認\n"
+            "2. プロキシ設定を確認（設定パネルから）\n"
+            "3. OpenAIのサービス状態を確認: https://status.openai.com"
+        )
+    elif isinstance(exception, OpenAIError):
+        # その他のOpenAIエラー
+        error_message = (
+            "⚠️ **OpenAI APIエラー**\n\n"
+            f"エラー内容: {str(exception)}\n\n"
+            "しばらく待ってから再試行してください。"
+        )
+    
+    # ベクトルストア関連のエラー
+    elif "vector_store" in str(exception).lower():
+        error_message = (
+            "📁 **ベクトルストアエラー**\n\n"
+            "ベクトルストアの操作中にエラーが発生しました。\n\n"
+            "対処法:\n"
+            "1. `/vs sync` でベクトルストアを同期\n"
+            "2. 設定パネルでベクトルストアIDを確認\n"
+            "3. 必要に応じて新しいベクトルストアを作成"
+        )
+    
+    # WebSocket関連のエラー
+    elif "websocket" in str(exception).lower() or "connection" in str(exception).lower():
+        error_message = (
+            "🔌 **接続エラー**\n\n"
+            "WebSocket接続に問題が発生しました。\n\n"
+            "対処法:\n"
+            "1. ページを再読み込み（F5）\n"
+            "2. ブラウザのキャッシュをクリア\n"
+            "3. 別のブラウザで試す"
+        )
+    
+    # その他の一般的なエラー
+    else:
+        error_message = (
+            "❌ **予期しないエラー**\n\n"
+            f"エラー: {type(exception).__name__}\n"
+            f"詳細: {str(exception)[:200]}...\n\n"
+            "このエラーが続く場合は、アプリケーションを再起動してください。"
+        )
+    
+    # エラーメッセージをユーザーに送信
+    try:
+        await cl.Message(
+            content=error_message,
+            author="System",
+            type="error_message"
+        ).send()
+    except Exception as msg_error:
+        # メッセージ送信自体が失敗した場合
+        app_logger.error(f"エラーメッセージの送信に失敗: {msg_error}")
+        # 最小限のエラー表示を試みる
+        try:
+            await cl.Message(
+                content="❌ エラーが発生しました。ページを再読み込みしてください。",
+                author="System"
+            ).send()
+        except:
+            pass  # 完全に失敗した場合は諦める
+
+
 @cl.on_chat_end
 async def on_chat_end():
     """

@@ -57,6 +57,22 @@ from .tools_config import tools_config
 from .logger import app_logger  # ログシステムを追加
 from .vector_store_handler import vector_store_handler  # ベクトルストアハンドラーを追加
 
+# リトライ機構のインポート
+try:
+    from tenacity import (
+        retry,
+        stop_after_attempt,
+        wait_exponential,
+        retry_if_exception_type,
+        before_retry,
+        after_retry
+    )
+    from openai import RateLimitError, APIConnectionError, APITimeoutError
+    TENACITY_AVAILABLE = True
+except ImportError:
+    app_logger.warning("tenacityライブラリが利用できません。リトライ機構は無効になります。")
+    TENACITY_AVAILABLE = False
+
 
 class ResponsesAPIHandler:
     """
@@ -138,6 +154,7 @@ class ResponsesAPIHandler:
         tool_choice: Union[str, Dict] = None,
         previous_response_id: str = None,
         session: Optional[Dict] = None,  # Chainlitセッションを追加
+        retry_count: int = 3,  # リトライ回数
         **kwargs
     ) -> AsyncGenerator[Dict, None]:
         """
@@ -253,10 +270,31 @@ class ResponsesAPIHandler:
                         tools_enabled=use_tools,
                         message_count=len(messages))
         
+        # リトライ機構付きAPI呼び出し関数を定義
+        async def call_api_with_retry():
+            """リトライ機構付きAPI呼び出し"""
+            if TENACITY_AVAILABLE and retry_count > 0:
+                # tenacityが利用可能な場合はリトライデコレータを使用
+                retry_decorator = retry(
+                    stop=stop_after_attempt(retry_count),
+                    wait=wait_exponential(multiplier=1, min=4, max=10),
+                    retry=retry_if_exception_type((RateLimitError, APIConnectionError, APITimeoutError)),
+                    before=lambda retry_state: app_logger.debug(f"🔄 API呼び出し試行 {retry_state.attempt_number}/{retry_count}")
+                )
+                
+                @retry_decorator
+                async def _call():
+                    return await self.async_client.responses.create(**response_params)
+                
+                return await _call()
+            else:
+                # tenacityが利用できない場合は直接呼び出し
+                return await self.async_client.responses.create(**response_params)
+        
         response_stream = None
         try:
             # ========================================================
-            # Responses APIを呼び出し
+            # Responses APIを呼び出し（リトライ機構付き）
             # OpenAI SDKはResponses APIを正式にサポートしています
             # 参照: https://platform.openai.com/docs/api-reference/responses
             # ========================================================
@@ -265,8 +303,9 @@ class ResponsesAPIHandler:
             app_logger.debug(f"  Input: {input_content[:100]}..." if len(input_content) > 100 else f"  Input: {input_content}")
             app_logger.debug(f"  Instructions: {instructions[:100]}..." if len(instructions) > 100 else f"  Instructions: {instructions}")
             app_logger.debug(f"  Tools: {len(tools)} tools enabled" if tools else "  Tools: None")
+            app_logger.debug(f"  Retry: {retry_count} attempts" if TENACITY_AVAILABLE else "  Retry: Disabled")
             
-            response = await self.async_client.responses.create(**response_params)
+            response = await call_api_with_retry()
             
             # ストリーミングモード
             if stream:
@@ -304,13 +343,29 @@ class ResponsesAPIHandler:
             app_logger.error(f"❌ API呼び出しエラー: {e}")
             import traceback
             app_logger.debug(f"❌ エラートレースバック: {traceback.format_exc()}")
+            
+            # エラーの種類に応じて詳細なメッセージを生成
+            error_message = str(e)
+            error_type = type(e).__name__
+            
+            # OpenAI関連のエラーに対してより具体的なメッセージを提供
+            if "AuthenticationError" in error_type:
+                error_message = "APIキーが無効または未設定です。`/setkey`コマンドで設定してください。"
+            elif "RateLimitError" in error_type:
+                error_message = "APIのレート制限に達しました。しばらく待ってから再試行してください。"
+            elif "APIConnectionError" in error_type or "APITimeoutError" in error_type:
+                error_message = "API接続エラーです。インターネット接続を確認してください。"
+            elif "vector_store" in error_message.lower():
+                error_message = "ベクトルストアの設定に問題があります。`/vs`コマンドで確認してください。"
+            
             yield {
-                "error": str(e),
+                "error": error_message,
                 "type": "api_error",
                 "details": {
                     "model": model,
                     "tools_enabled": use_tools,
-                    "error_type": type(e).__name__
+                    "error_type": error_type,
+                    "original_error": str(e)[:500]  # 元のエラーメッセージを一部保持
                 }
             }
         finally:
