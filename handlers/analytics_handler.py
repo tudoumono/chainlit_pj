@@ -6,6 +6,7 @@
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
+import chainlit as cl
 from utils.ui_helper import ChainlitHelper as ui
 from utils.error_handler import ErrorHandler as error_handler
 from utils.logger import app_logger
@@ -39,13 +40,20 @@ class AnalyticsHandler:
             # ダッシュボードHTML生成
             dashboard_html = self.chart_helper.create_usage_dashboard(summary_data)
             
-            await ui.update_loading_message(loading_msg, dashboard_html)
+            # HTMLメッセージを直接送信
+            await cl.Message(
+                content=dashboard_html,
+                author="📊 Analytics"
+            ).send()
             
             # ベクトルストア使用状況も表示
             vs_summary = analytics_logger.get_vector_store_summary(user_id, days)
             if vs_summary and vs_summary.get("vs_usage"):
                 vs_dashboard_html = self.chart_helper.create_vector_store_dashboard(vs_summary)
-                await ui.send_system_message(vs_dashboard_html)
+                await cl.Message(
+                    content=vs_dashboard_html,
+                    author="📊 Vector Store Analytics"
+                ).send()
             
             app_logger.info("使用量ダッシュボード表示完了", user_id=user_id, days=days)
             

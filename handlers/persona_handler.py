@@ -75,7 +75,7 @@ class PersonaHandler:
         try:
             # アクションボタンでペルソナ作成フォームを送信
             actions = [
-                cl.Action(name="create_persona_form", value="start", label="📝 ペルソナ作成フォーム")
+                cl.Action(name="create_persona_form", payload={"value": "start"}, label="📝 ペルソナ作成フォーム")
             ]
             
             await cl.Message(

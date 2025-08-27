@@ -34,6 +34,9 @@ from handlers.persona_handler import persona_handler
 from handlers.settings_handler import settings_handler
 from handlers.vector_store_commands import vector_store_commands
 
+# グローバルハンドラーインスタンス（遅延初期化用）
+persona_handler_instance = None
+
 # WebSocket接続モニター（オプション）
 try:
     from utils.connection_handler import connection_monitor, handle_websocket_error
@@ -118,8 +121,9 @@ async def _initialize_session(user_id: str):
             ui.set_session("active_persona", default_persona)
             ui.set_session("system_prompt", default_persona.get("system_prompt", ""))
         
-        # APIクライアント初期化
-        responses_handler.reset_conversation()
+        # 会話履歴のリセット
+        ui.set_session("message_history", [])
+        ui.set_session("previous_response_id", None)
         
         app_logger.info("セッション初期化完了", user_id=user_id, thread_id=thread_id)
         
