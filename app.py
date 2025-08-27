@@ -102,7 +102,7 @@ from utils.persona_manager import persona_manager  # Phase 6: ペルソナ管理
 from utils.vector_store_handler import vector_store_handler  # Phase 7: ベクトルストア
 from utils.vector_store_sync import get_sync_manager  # ベクトルストア同期管理
 from utils.action_helper import ask_confirmation  # Actionヘルパー
-from utils.integrated_vs_commands import handle_integrated_vs_commands, handle_integrated_file_upload  # 統合ベクトルストアコマンド
+# 統合ベクトルストアコマンド機能は削除済み
 
 # アプリケーション設定
 APP_NAME = "AI Workspace"
@@ -864,10 +864,14 @@ async def on_message(message: cl.Message):
     message_count = cl.user_session.get("message_count", 0) + 1
     cl.user_session.set("message_count", message_count)
     
-    # Phase 7: ファイルアップロード処理（統合版）
+    # Phase 7: ファイルアップロード処理（基本版）
     if message.elements:
-        # 統合版のファイルアップロード処理を呼び出す
-        await handle_integrated_file_upload(message.elements)
+        # 基本的なファイルアップロード処理
+        app_logger.info(f"📎 ファイルアップロード検出: {len(message.elements)}個のファイル")
+        await cl.Message(
+            content=f"📎 {len(message.elements)}個のファイルをアップロードしました。ベクトルストア機能は基本実装を使用してください。",
+            author="System"
+        ).send()
         
         # ファイルがアップロードされた場合でも、メッセージがあれば処理を続ける
         if not user_input:
@@ -1086,8 +1090,11 @@ async def handle_command(user_input: str):
             author="System"
         ).send()
     elif cmd == "/vs" or cmd == "/vector":
-        # 統合版のベクトルストアコマンドハンドラを使用
-        await handle_integrated_vs_commands(user_input)
+        # ベクトルストア基本コマンド
+        await cl.Message(
+            content="🔧 ベクトルストア機能は基本実装を使用してください。\n詳細な管理機能は utils/vector_store_handler.py を参照してください。",
+            author="System"
+        ).send()
     else:
         await cl.Message(
             content=f"❌ 不明なコマンド: {cmd}\n`/help` でコマンド一覧を確認してください。",
