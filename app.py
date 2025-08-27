@@ -61,11 +61,13 @@ except Exception as e:
         app_logger.error("データレイヤーの初期化に失敗")
 
 
-@cl.oauth_callback
-def oauth_callback(provider_id: str, token: str, raw_user_data: Dict[str, str], default_user: cl.User) -> Optional[cl.User]:
-    """OAuth認証コールバック"""
-    app_logger.info("OAuth認証完了", provider=provider_id, user_id=default_user.identifier)
-    return default_user
+# OAuth認証は現在無効（環境変数未設定のため）
+# 必要に応じて.envファイルにOAuth設定を追加してください
+# @cl.oauth_callback
+# def oauth_callback(provider_id: str, token: str, raw_user_data: Dict[str, str], default_user: cl.User) -> Optional[cl.User]:
+#     """OAuth認証コールバック"""
+#     app_logger.info("OAuth認証完了", provider=provider_id, user_id=default_user.identifier)
+#     return default_user
 
 
 @cl.on_chat_start
@@ -227,7 +229,29 @@ async def _show_welcome_message():
         
         message += "**コマンドヘルプ**: `/help` で全コマンド表示"
         
-        await ui.send_system_message(message)
+        # アクションボタンを作成
+        actions = [
+            cl.Action(
+                name="create_persona_form",
+                payload={"action": "create_persona"},
+                label="🎭 新しいペルソナ作成",
+                icon="user-plus"
+            ),
+            cl.Action(
+                name="analytics_dashboard", 
+                payload={"action": "show_analytics"},
+                label="📊 統計ダッシュボード",
+                icon="bar-chart"
+            ),
+            cl.Action(
+                name="search_workspace",
+                payload={"action": "search", "query": ""},
+                label="🔍 ワークスペース検索",
+                icon="search"
+            )
+        ]
+        
+        await cl.Message(content=message, actions=actions).send()
         
     except Exception as e:
         app_logger.error("ウェルカムメッセージエラー", error=str(e))
@@ -271,6 +295,10 @@ async def message_handler(message: cl.Message):
     try:
         user_input = message.content.strip()
         app_logger.info("メッセージ受信", content_length=len(user_input))
+        
+        # ファイルアップロード処理（メッセージに添付されている場合）
+        if message.elements:
+            await handle_file_upload(message)
         
         # コマンド処理
         if user_input.startswith("/"):
@@ -336,36 +364,88 @@ async def _process_conversation(user_input: str):
         await error_handler.handle_unexpected_error(e, "会話処理")
 
 
-@cl.on_file_upload
-async def file_upload(files: List[cl.File]):
-    """ファイルアップロード処理"""
+async def handle_file_upload(message: cl.Message):
+    """メッセージに添付されたファイルの処理"""
     try:
-        if not files:
+        if not message.elements:
             return
         
-        app_logger.info("ファイルアップロード開始", count=len(files))
+        app_logger.info("ファイル処理開始", count=len(message.elements))
         
-        # ベクトルストアハンドラーに処理を委譲
-        await vector_store_commands.process_file_upload(files)
+        # ベクトルストア管理の処理
+        from utils.vector_store_handler import vector_store_handler
         
-    except Exception as e:
-        await error_handler.handle_file_error(e, "ファイルアップロード")
-
-
-@cl.on_action
-async def action_handler(action: cl.Action):
-    """アクション処理"""
-    try:
-        action_name = action.name
-        app_logger.info("アクション実行", name=action_name)
+        success_count = 0
+        for element in message.elements:
+            if hasattr(element, 'mime') and hasattr(element, 'path'):
+                try:
+                    # ファイル保存とベクトルストア追加
+                    saved_path = await vector_store_handler.save_uploaded_file(element)
+                    if saved_path:
+                        success_count += 1
+                        app_logger.info("ファイル保存完了", name=element.name, path=saved_path)
+                except Exception as e:
+                    app_logger.error("ファイル処理エラー", name=element.name, error=str(e))
         
-        if action_name == "create_persona_form":
-            await persona_handler.create_persona_interactive()
+        if success_count > 0:
+            await ui.send_success_message(
+                f"📁 {success_count}個のファイルをアップロードし、ベクトルストアに追加しました。"
+            )
         else:
-            await ui.send_error_message(f"不明なアクション: {action_name}")
+            await ui.send_info_message("ファイルが検出されましたが、処理できませんでした。")
             
     except Exception as e:
-        await error_handler.handle_unexpected_error(e, "アクション処理")
+        await error_handler.handle_unexpected_error(e, "ファイル処理")
+
+
+@cl.action_callback("create_persona_form")
+async def create_persona_action(action: cl.Action):
+    """ペルソナ作成アクション"""
+    try:
+        app_logger.info("ペルソナ作成アクション実行")
+        persona_handler = persona_handler_instance or _get_persona_handler()
+        await persona_handler.create_persona_interactive()
+        await action.remove()
+    except Exception as e:
+        await error_handler.handle_unexpected_error(e, "ペルソナ作成アクション")
+
+@cl.action_callback("analytics_dashboard")
+async def analytics_dashboard_action(action: cl.Action):
+    """統計ダッシュボードアクション"""
+    try:
+        app_logger.info("統計ダッシュボードアクション実行")
+        from handlers.analytics_handler import AnalyticsHandler
+        analytics_handler = AnalyticsHandler()
+        user_id = ui.get_session("user_id")
+        await analytics_handler.show_usage_dashboard(user_id)
+        await action.remove()
+    except Exception as e:
+        await error_handler.handle_unexpected_error(e, "統計ダッシュボードアクション")
+
+@cl.action_callback("search_workspace")  
+async def search_workspace_action(action: cl.Action):
+    """ワークスペース検索アクション"""
+    try:
+        app_logger.info("検索アクション実行")
+        search_query = action.payload.get("query", "")
+        if search_query:
+            from handlers.search_handler import SearchHandler
+            search_handler = SearchHandler()
+            user_id = ui.get_session("user_id")
+            await search_handler.search_all(search_query, user_id)
+        else:
+            await ui.send_info_message("検索クエリを指定してください。")
+        await action.remove()
+    except Exception as e:
+        await error_handler.handle_unexpected_error(e, "検索アクション")
+
+def _get_persona_handler():
+    """ペルソナハンドラー取得（グローバル変数対応）"""
+    global persona_handler_instance
+    if persona_handler_instance is None:
+        from handlers.persona_handler import PersonaHandler
+        persona_handler_instance = PersonaHandler()
+    return persona_handler_instance
 
 
 @cl.on_chat_resume
