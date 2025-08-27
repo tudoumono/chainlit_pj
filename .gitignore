@@ -222,3 +222,8 @@ desktop.ini
 *.prof
 *.lprof
 *.stats
+
+pipx_shared.pth
+CLAUDE.md
+
+data

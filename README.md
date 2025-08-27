@@ -40,9 +40,9 @@ OpenAI APIを活用したプロフェッショナル向けのAIチャットア�
 
 **「Responses API」について：**
 - ✅ OpenAIの新機能は**正式にサポートされています**
-- ℹ️ 技術的にはChat Completions APIのツール機能として実装
-- ❌ `client.responses.create()`メソッドは存在しません
-- ✅ すべて`client.chat.completions.create()`で利用します
+- ✅ `client.responses.create()`メソッドを使用します
+- ✅ 本プロジェクトはResponses API専用実装です
+- ❌ Chat Completions APIの使用は一切禁止されています
 
 ### ベクトルストアAPIについて
 

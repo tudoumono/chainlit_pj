@@ -148,7 +148,7 @@
 - **原因**: ストリーミング処理の実装が不正確
 - **修正内容**:
   - Responses APIの仕様に従って実装を改善
-  - `client.responses.create()`の呼び出しを試み、利用不可の場合はchat.completionsにフォールバック
+  - `client.responses.create()`のみを使用（Chat Completions APIは使用禁止）
   - 「openai responseAPI reference (Conversation state).md」に従ったメッセージ履歴管理
   - ストリーミングチャンクの正しい処理（deltaの処理）
   - Responses APIイベントとChat Completions APIの両方に対応
