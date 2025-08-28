@@ -3,24 +3,38 @@
 Phase 7: OpenAI File Search APIを使った三層ナレッジベース管理
 
 ========================================================
-統合版: すべてのベクトルストア機能を一元管理
+🎯 このモジュールの役割
 ========================================================
+AIアプリケーションで文書を検索可能にするための「ベクトルストア」を管理します。
+ベクトルストアとは、文書をAIが理解できる数値データに変換して保存する仕組みです。
 
-三層のベクトルストア構造:
-1. 会社全体（Company） - 共有ナレッジベース（.envから読み込み）
-2. 個人ユーザー（Personal） - 個人用ナレッジベース（DBに永続化）
-3. セッション（Session） - 一時的なナレッジベース（メモリ内）
+📚 三層のベクトルストア構造（初心者向け説明）
+========================================================
+1. 会社全体（Company）
+   - 全社員が共有できる文書（会社規則、マニュアルなど）
+   - .envファイルに設定されたIDで管理
+   
+2. 個人ユーザー（Personal）
+   - 個人専用の文書（個人メモ、作業履歴など）
+   - データベースに永続的に保存される
+   
+3. セッション（Session）
+   - 一時的な文書（今の会話で使うファイルなど）
+   - メモリ内のみで保存、24時間後自動削除
 
-実装機能:
-- OpenAI Assistant APIのbeta.vector_stores を使用
-- 各階層のベクトルストアを適切に管理
-- セキュアな所有者管理機能
-- 自動削除機能（24時間後）
-- GUI管理機能のサポート
-- 単一のインターフェースで全階層にアクセス可能
+🔧 実装機能（技術詳細）
+========================================================
+- OpenAI Assistant APIのbeta.vector_stores エンドポイントを活用
+- 各階層のベクトルストアを適切に分離・管理
+- セキュアな所有者管理機能（権限チェック付き）
+- 自動削除機能（リソース節約のため24時間後削除）
+- GUI管理機能のサポート（ユーザーインターフェース対応）
+- 単一のインターフェースで全階層にアクセス可能（APIの統一）
 
-変更履歴:
+📅 変更履歴
+========================================================
 - 2025-08-25: 重複実装を統合、セキュリティ機能と自動管理機能を統合
+- 2025-08-28: Pydantic設定システム対応、pathlib使用、初心者向けコメント追加
 """
 
 import os
@@ -54,51 +68,100 @@ _mime_settings = get_mime_settings()
 class VectorStoreHandler:
     """ベクトルストア管理クラス（統合版）
     
-    このクラスは以下の機能を統合:
+    🔍 このクラスの役割（初心者向け）
+    =======================================
+    文書をAIが検索できるように管理する「司書」のような役割を果たします。
+    図書館の司書が本を分類・整理・貸し出しするように、
+    このクラスは文書を3つのカテゴリ（会社・個人・一時）に分類して管理します。
+    
+    🏗️ 統合機能一覧
+    =======================================
     - 3階層のベクトルストア管理（会社全体、個人、セッション）
+      → 文書を適切な「本棚」に分類
     - セキュアな所有者管理
+      → 誰がどの文書にアクセスできるかを制御
     - 自動削除機能
+      → 不要になった一時ファイルを24時間後に自動削除
     - GUI管理機能
+      → ユーザーが画面操作で文書管理できるよう支援
     - Responses API対応
+      → OpenAIの最新API仕様に準拠
     """
     
     @property
     def SUPPORTED_FILE_TYPES(self) -> Dict[str, str]:
-        """サポートされるファイル形式（設定から取得）"""
+        """サポートされるファイル形式（設定から取得）
+        
+        🎯 目的: アップロード可能なファイルの種類を定義
+        📋 動作: 中央設定システムからMIME型マッピングを取得
+        💡 初心者向け: .txt, .pdf, .py などの拡張子に対応するファイル種別辞書を返す
+        
+        Returns:
+            Dict[str, str]: ファイル拡張子とMIME型の対応辞書
+                           例: {'.txt': 'text/plain', '.pdf': 'application/pdf'}
+        """
         return self._mime_settings.all_types
     
     def __init__(self):
-        """初期化"""
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
-        self.client = None
-        self.async_client = None
-        self._init_clients()
+        """クラスの初期化処理
         
-        # 三層のベクトルストアID管理
-        self.company_vs_id = os.getenv("COMPANY_VECTOR_STORE_ID", "")  # 1層目: 社内共有
-        self.personal_vs_ids = {}  # 2層目: 個人用（ユーザーIDをキーとした辞書）
-        self.session_vs_ids = {}   # 3層目: セッション用（セッションIDをキーとした辞書）
+        🎯 目的: ベクトルストアハンドラーのセットアップ
+        📋 実行内容:
+        1. OpenAI APIクライアントの初期化
+        2. 3層のベクトルストア管理用変数の準備
+        3. キャッシュシステムの初期化
+        4. ローカルディレクトリの作成
         
-        # 管理用キャッシュ
-        self._ownership_cache = {}  # VSの所有者情報をキャッシュ
-        self._session_vs_cache = {}  # セッションVSのキャッシュ
-        self._user_preferences = {}  # ユーザー設定のキャッシュ
+        💡 初心者向け: このメソッドはクラスのインスタンス作成時に自動実行されます
+        """
+        # OpenAI API接続設定
+        self.api_key = os.getenv("OPENAI_API_KEY", "")  # 環境変数からAPIキーを取得
+        self.client = None          # 同期用OpenAIクライアント（後で初期化）
+        self.async_client = None    # 非同期用OpenAIクライアント（後で初期化）
+        self._init_clients()        # 実際のクライアント初期化を実行
         
-        # 自動削除設定
-        self.auto_delete_hours = 24  # 24時間後に自動削除
+        # 三層のベクトルストアID管理（データ分離のため）
+        self.company_vs_id = os.getenv("COMPANY_VECTOR_STORE_ID", "")  # 1層目: 会社全体共有
+        self.personal_vs_ids = {}   # 2層目: 個人用（ユーザーIDをキーとした辞書）
+        self.session_vs_ids = {}    # 3層目: セッション用（セッションIDをキーとした辞書）
         
-        # ローカル管理用ディレクトリ（v2互換）
-        self.vs_dir = ".chainlit/vector_stores"
-        self.files_dir = ".chainlit/vector_store_files"
-        self._ensure_directories()
+        # パフォーマンス向上用キャッシュシステム
+        self._ownership_cache = {}      # ベクトルストアの所有者情報をメモリに保存
+        self._session_vs_cache = {}     # セッション用ベクトルストアの情報をキャッシュ
+        self._user_preferences = {}     # ユーザー設定をメモリに保存（高速アクセス用）
+        
+        # 自動削除設定（リソース節約のため）
+        self.auto_delete_hours = 24     # 24時間後に一時ファイルを自動削除
+        
+        # ローカルファイル管理用ディレクトリ（旧バージョンとの互換性維持）
+        self.vs_dir = ".chainlit/vector_stores"      # ベクトルストア情報保存先
+        self.files_dir = ".chainlit/vector_store_files"  # ファイル一時保存先
+        self._ensure_directories()  # 必要なディレクトリを作成
     
     def _ensure_directories(self):
-        """必要なディレクトリを作成"""
-        os.makedirs(self.vs_dir, exist_ok=True)
-        os.makedirs(self.files_dir, exist_ok=True)
+        """必要なディレクトリを作成
+        
+        🎯 目的: ローカルファイル管理用のフォルダを準備
+        📋 動作: ベクトルストア情報とファイル保存用ディレクトリを作成
+        💡 初心者向け: フォルダが存在しない場合のみ作成、既存フォルダは変更しません
+        
+        Note:
+            exist_ok=True により、既存ディレクトリがあってもエラーにならない
+        """
+        os.makedirs(self.vs_dir, exist_ok=True)     # ベクトルストア設定保存用
+        os.makedirs(self.files_dir, exist_ok=True)  # アップロードファイル一時保存用
     
     def _init_clients(self):
-        """OpenAIクライアントを初期化"""
+        """OpenAIクライアントを初期化
+        
+        🎯 目的: OpenAI APIとの通信準備
+        📋 実行内容:
+        1. APIキーの検証
+        2. プロキシ設定の確認
+        3. 同期・非同期クライアントの作成
+        
+        💡 初心者向け: OpenAI APIを使うための「電話回線」のようなものを準備します
+        """
         print(f"🔧 OpenAIクライアント初期化中...")
         
         if not self.api_key or self.api_key == "your_api_key_here":
@@ -516,15 +579,23 @@ class VectorStoreHandler:
             return False
     
     async def rename_vector_store(self, vector_store_id: str, new_name: str) -> bool:
-        """
-        ベクトルストアの名前を変更
+        """ベクトルストアの名前を変更
+        
+        🎯 目的: 既存のベクトルストアに新しい名前を設定
+        📋 動作: OpenAI APIを使用してベクトルストアの名前を更新
+        💡 初心者向け: ファイルの名前を変更するように、ベクトルストアの表示名を変更します
         
         Args:
-            vector_store_id: ベクトルストアID
-            new_name: 新しい名前
+            vector_store_id (str): 変更対象のベクトルストアID
+                                  例: "vs_abc123def456"
+            new_name (str): 新しい名前
+                           例: "新しいプロジェクト資料"
         
         Returns:
-            成功/失敗
+            bool: 成功時True、失敗時False
+            
+        Raises:
+            Exception: API通信エラーまたは権限エラー時
         """
         try:
             if not self.async_client:
@@ -554,40 +625,72 @@ class VectorStoreHandler:
             return False
     
     def is_supported_file(self, filename: str) -> bool:
-        """
-        ファイルがサポートされているか確認
+        """ファイルがアップロード対応形式かを確認
+        
+        🎯 目的: ファイルがシステムで処理可能かを事前チェック
+        📋 動作: ファイルの拡張子を確認し、サポート対象リストと照合
+        💡 初心者向け: .txt, .pdf などの許可されたファイル形式かを判定します
         
         Args:
-            filename: ファイル名
+            filename (str): 確認するファイル名
+                          例: "document.pdf", "code.py"
         
         Returns:
-            サポートされているか
+            bool: サポート対象の場合True、未対応の場合False
+            
+        Example:
+            >>> handler.is_supported_file("document.pdf")
+            True
+            >>> handler.is_supported_file("image.bmp")
+            False
         """
-        ext = Path(filename).suffix.lower()
+        ext = Path(filename).suffix.lower()  # 拡張子を小文字で取得（大文字小文字を区別しない）
         return ext in self.SUPPORTED_FILE_TYPES
     
     def get_mime_type(self, filename: str) -> str:
-        """
-        ファイルのMIMEタイプを取得
+        """ファイルのMIME型を取得
+        
+        🎯 目的: ファイル種別をWebの標準形式で特定
+        📋 動作: 拡張子からMIME型を決定、未知の形式はバイナリとして扱う
+        💡 初心者向け: .txt → text/plain のように、ファイルの「身分証明書」を取得します
         
         Args:
-            filename: ファイル名
+            filename (str): 対象ファイル名
+                          例: "report.pdf", "script.py"
         
         Returns:
-            MIMEタイプ
+            str: MIME型文字列
+                例: "application/pdf", "text/x-python"
+                未対応の場合は "application/octet-stream" (汎用バイナリ)
+                
+        Note:
+            MIME型はブラウザやAPI通信でファイル種別を識別するために使用
         """
         ext = Path(filename).suffix.lower()
         return self.SUPPORTED_FILE_TYPES.get(ext, 'application/octet-stream')
     
     async def process_uploaded_file(self, element) -> Optional[str]:
-        """
-        Chainlitのファイルエレメントを処理してOpenAIにアップロード
+        """ChainlitのファイルをOpenAIにアップロード処理
+        
+        🎯 目的: ユーザーがアップロードしたファイルをAI処理可能な形式に変換
+        📋 実行手順:
+        1. Chainlitファイル要素から実ファイルを取得
+        2. 一時保存場所にファイルを保存
+        3. OpenAI APIにファイルをアップロード
+        4. 一時ファイルを削除（セキュリティ・容量対策）
+        
+        💡 初心者向け: ユーザーの画面からのファイル→AI用ファイルへの「変換器」です
         
         Args:
-            element: Chainlitのファイルエレメント
+            element: Chainlitのファイル要素オブジェクト
+                    .path（ファイルパス）と .name（ファイル名）を含む
         
         Returns:
-            アップロードされたファイルID、失敗時はNone
+            Optional[str]: 成功時はOpenAIファイルID（例: "file_abc123"）
+                          失敗時はNone
+                          
+        Raises:
+            Exception: ファイルアクセスエラーまたはAPI通信エラー時
         """
         try:
             filename = element.name
