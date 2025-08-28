@@ -3,17 +3,17 @@
   "vector_store_layers": {
     "company": false,
     "personal": false,
-    "thread": true
+    "thread": false
   },
   "tools": {
     "web_search": {
-      "enabled": false,
+      "enabled": true,
       "name": "web_search",
       "description": "Search the web for current information",
       "auto_invoke": true
     },
     "file_search": {
-      "enabled": true,
+      "enabled": false,
       "name": "file_search",
       "description": "Search through uploaded files and documents",
       "auto_invoke": true,

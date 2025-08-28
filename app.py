@@ -99,6 +99,59 @@ async def chat_start():
         await error_handler.handle_unexpected_error(e, "チャット開始")
 
 
+@cl.on_chat_resume
+async def on_chat_resume(thread: dict):
+    """チャット再開時の処理 - Chainlitが自動的にメッセージと要素を復元"""
+    try:
+        thread_id = thread.get("id", "unknown")
+        app_logger.info("チャット再開", thread_id=thread_id)
+        
+        # ユーザー情報を取得
+        user = cl.user_session.get("user")
+        user_id = user.identifier if user else "anonymous"
+        
+        # セッション情報のみ復元（メッセージはChainlitが自動復元）
+        await _restore_session_on_resume(user_id, thread_id, thread)
+        
+        # 設定UI作成（チャット再開時にも必要）
+        await _create_settings_ui()
+        
+        app_logger.info("✅ セッション復元完了", thread_id=thread_id)
+        
+    except Exception as e:
+        app_logger.error("❌ チャット再開エラー", error=str(e))
+        await error_handler.handle_unexpected_error(e, "チャット再開")
+
+
+async def _restore_session_on_resume(user_id: str, thread_id: str, thread: dict):
+    """チャット再開時のセッション復元"""
+    try:
+        # セッション初期化
+        ui.set_session("user_id", user_id)
+        ui.set_session("thread_id", thread_id)
+        
+        # ベクトルストアIDs復元
+        await _initialize_vector_stores(user_id, thread)
+        
+        # デフォルトペルソナ設定
+        default_persona = await persona_manager.get_persona("汎用アシスタント")
+        if default_persona:
+            ui.set_session("active_persona", default_persona)
+            ui.set_session("system_prompt", default_persona.get("system_prompt", ""))
+        
+        # 注意: Chainlitが@cl.on_chat_resumeで自動的に過去のメッセージとエレメントをUIに送信
+        # セッション変数の履歴は新しい会話のために初期化
+        ui.set_session("message_history", [])
+        
+        # previous_response_idをスレッドから復元（OpenAI Responses APIの会話継続に必要）
+        thread_response_id = thread.get("metadata", {}).get("previous_response_id")
+        ui.set_session("previous_response_id", thread_response_id)
+        
+    except Exception as e:
+        app_logger.error("セッション復元エラー", error=str(e))
+        raise
+
+
 async def _initialize_session(user_id: str):
     """セッション初期化"""
     try:
@@ -121,15 +174,34 @@ async def _initialize_session(user_id: str):
             ui.set_session("active_persona", default_persona)
             ui.set_session("system_prompt", default_persona.get("system_prompt", ""))
         
-        # 会話履歴のリセット
-        ui.set_session("message_history", [])
-        ui.set_session("previous_response_id", None)
+        # 会話履歴の復元または初期化
+        await _restore_chat_history(thread_id)
         
         app_logger.info("セッション初期化完了", user_id=user_id, thread_id=thread_id)
         
     except Exception as e:
         app_logger.error("セッション初期化エラー", error=str(e))
         raise
+
+
+async def _restore_chat_history(thread_id: str):
+    """チャット履歴を復元"""
+    try:
+        # 簡単な方法：Chainlitの内蔵履歴機能を利用
+        # データ永続化が有効な場合、Chainlitが自動的に履歴を復元する
+        
+        # セッション履歴を初期化
+        ui.set_session("message_history", [])
+        ui.set_session("previous_response_id", None)
+        
+        app_logger.info("履歴復元処理完了", thread_id=thread_id)
+        app_logger.info("注意: Chainlitの自動履歴復元機能に依存")
+            
+    except Exception as e:
+        app_logger.error("履歴復元エラー", error=str(e))
+        # エラー時は空の履歴で開始
+        ui.set_session("message_history", [])
+        ui.set_session("previous_response_id", None)
 
 
 async def _initialize_vector_stores(user_id: str, thread: dict):
@@ -172,39 +244,88 @@ async def _initialize_vector_stores(user_id: str, thread: dict):
 async def _create_settings_ui():
     """設定UIを作成"""
     try:
-        # チャット設定UI
+        # 現在の設定値を取得
+        settings = config_manager.get_all_settings()
+        proxy_settings = config_manager.get_proxy_settings()
+        available_models = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
+        current_settings = ui.get_session("settings", {})
+        vector_store_ids = ui.get_session("vector_store_ids", {})
+        
+        # 詳細な設定UI（元の完全版）
         await cl.ChatSettings([
             Select(
-                id="model",
-                label="🤖 Model",
-                values=["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-                initial_index=1,
+                id="Model",
+                label="OpenAI - Model",
+                values=available_models,
+                initial_index=available_models.index(current_settings.get("Model", settings.get("DEFAULT_MODEL", "gpt-4o-mini"))) if current_settings.get("Model", settings.get("DEFAULT_MODEL", "gpt-4o-mini")) in available_models else 0,
             ),
-            Slider(
-                id="temperature",
-                label="🌡️ Temperature",
-                initial=0.7,
-                min=0.0,
-                max=2.0,
-                step=0.1,
+            Switch(id="Tools_Enabled", label="Tools機能 - 有効/無効", initial=tools_config.is_enabled()),
+            Switch(id="Web_Search", label="Web検索 - 有効/無効", initial=tools_config.is_tool_enabled("web_search")),
+            Switch(
+                id="File_Search", 
+                label="ファイル検索 - 有効/無効", 
+                initial=tools_config.is_tool_enabled("file_search"),
+                description="有効時は下記ベクトルストアで指定したストアの内容を検索します"
+            ),
+            # ベクトルストア3層設定
+            Switch(
+                id="VS_Layer_Company",
+                label="ベクトル層1: 会社全体 - 有効/無効",
+                initial=tools_config.is_layer_enabled("company"),
+                description="会社全体で共有するナレッジベース"
+            ),
+            TextInput(
+                id="VS_ID_Company",
+                label="会社全体ベクトルストアID",
+                initial=vector_store_ids.get("company", os.getenv("COMPANY_VECTOR_STORE_ID", "")),
+                placeholder="vs_xxxxx",
+                description="会社全体で使用するベクトルストアのID"
             ),
             Switch(
-                id="stream",
-                label="🔄 Stream",
-                initial=True,
+                id="VS_Layer_Personal",
+                label="ベクトル層2: 個人ユーザー - 有効/無効",
+                initial=tools_config.is_layer_enabled("personal"),
+                description="個人ユーザー専用のナレッジベース"
             ),
             TextInput(
-                id="company_vs_id",
-                label="🏢 Company Vector Store ID",
-                initial=os.getenv("COMPANY_VECTOR_STORE_ID", ""),
-                placeholder="vs_xxxxx",
-            ),
-            TextInput(
-                id="personal_vs_id", 
-                label="👤 Personal Vector Store ID",
-                initial=ui.get_session("vector_store_ids", {}).get("personal", ""),
+                id="VS_ID_Personal",
+                label="個人ベクトルストアID",
+                initial=vector_store_ids.get("personal", ""),
                 placeholder="vs_yyyyy",
-            )
+                description="個人専用のベクトルストアのID"
+            ),
+            Switch(
+                id="VS_Layer_Thread",
+                label="ベクトル層3: チャット単位 - 有効/無効",
+                initial=tools_config.is_layer_enabled("thread"),
+                description="このチャット専用のナレッジベース（自動作成）"
+            ),
+            Switch(
+                id="Proxy_Enabled",
+                label="プロキシ - 有効/無効",
+                initial=proxy_settings.get("PROXY_ENABLED", False)
+            ),
+            TextInput(
+                id="Proxy_URL",
+                label="プロキシURL",
+                initial=proxy_settings.get("HTTPS_PROXY", ""),
+                placeholder="http://user:pass@host:port",
+            ),
+            Slider(
+                id="Temperature",
+                label="OpenAI - Temperature",
+                initial=ui.get_session("temperature", 0.7),
+                min=0,
+                max=2,
+                step=0.1,
+                description="応答の創造性を制御 (0=決定的, 1=バランス, 2=創造的)"
+            ),
+            TextInput(
+                id="System_Prompt",
+                label="システムプロンプト",
+                initial=ui.get_session("system_prompt", ""),
+                placeholder="AIの振る舞いを定義するプロンプトを入力...",
+            ),
         ]).send()
         
     except Exception as e:
@@ -272,22 +393,70 @@ async def settings_update(settings):
         current_settings.update(settings)
         ui.set_session("settings", current_settings)
         
-        # モデル変更
-        if "model" in settings:
-            responses_handler.update_model(settings["model"])
+        # 1. モデル変更処理
+        if "Model" in settings:
+            responses_handler.update_model(settings["Model"])
+            app_logger.info("モデル変更", model=settings["Model"])
         
-        # ベクトルストア設定更新
-        if "company_vs_id" in settings or "personal_vs_id" in settings:
-            vs_ids = ui.get_session("vector_store_ids", {})
-            if "company_vs_id" in settings:
-                vs_ids["company"] = settings["company_vs_id"]
-                ui.set_session("company_vs_id", settings["company_vs_id"])
-            if "personal_vs_id" in settings:
-                vs_ids["personal"] = settings["personal_vs_id"]
-                ui.set_session("personal_vs_id", settings["personal_vs_id"])
-            ui.set_session("vector_store_ids", vs_ids)
+        # 2. Tools設定更新
+        if "Tools_Enabled" in settings:
+            tools_config.update_enabled(settings["Tools_Enabled"])
+        if "Web_Search" in settings:
+            tools_config.update_tool_status("web_search", settings["Web_Search"])
+        if "File_Search" in settings:
+            tools_config.update_tool_status("file_search", settings["File_Search"])
         
-        await ui.send_success_message("設定を更新しました")
+        # 3. ベクトルストア3層設定更新
+        vs_ids = ui.get_session("vector_store_ids", {})
+        
+        # 会社全体層
+        if "VS_Layer_Company" in settings:
+            tools_config.set_layer_enabled("company", settings["VS_Layer_Company"])
+        if "VS_ID_Company" in settings:
+            company_id = settings["VS_ID_Company"].strip() if settings["VS_ID_Company"] else ""
+            vs_ids["company"] = company_id
+            ui.set_session("company_vs_id", company_id)
+            # 注意: 会社全体のベクトルストアIDは.envファイルから読み取り専用
+            
+        # 個人ユーザー層
+        if "VS_Layer_Personal" in settings:
+            tools_config.set_layer_enabled("personal", settings["VS_Layer_Personal"])
+        if "VS_ID_Personal" in settings:
+            personal_id = settings["VS_ID_Personal"].strip() if settings["VS_ID_Personal"] else ""
+            vs_ids["personal"] = personal_id
+            ui.set_session("personal_vs_id", personal_id)
+            
+        # チャット単位層
+        if "VS_Layer_Thread" in settings:
+            tools_config.set_layer_enabled("thread", settings["VS_Layer_Thread"])
+        
+        ui.set_session("vector_store_ids", vs_ids)
+        
+        # 4. プロキシ設定更新
+        if "Proxy_Enabled" in settings or "Proxy_URL" in settings:
+            proxy_enabled = settings.get("Proxy_Enabled", False)
+            proxy_url = settings.get("Proxy_URL", "")
+            if proxy_enabled and proxy_url:
+                config_manager.set_proxy_settings(
+                    http_proxy=proxy_url,
+                    https_proxy=proxy_url,
+                    proxy_enabled=proxy_enabled
+                )
+                app_logger.info("プロキシ設定更新", enabled=proxy_enabled, url=proxy_url)
+        
+        # 5. Temperature設定更新
+        if "Temperature" in settings:
+            ui.set_session("temperature", settings["Temperature"])
+            app_logger.info("Temperature更新", temperature=settings["Temperature"])
+        
+        # 6. システムプロンプト更新
+        if "System_Prompt" in settings:
+            system_prompt = settings["System_Prompt"]
+            ui.set_session("system_prompt", system_prompt)
+            prompt_length = len(system_prompt) if system_prompt else 0
+            app_logger.info("システムプロンプト更新", prompt_length=prompt_length)
+        
+        await ui.send_success_message("🔧 設定を更新しました")
         
     except Exception as e:
         await error_handler.handle_unexpected_error(e, "設定更新")
@@ -319,50 +488,89 @@ async def message_handler(message: cl.Message):
 async def _process_conversation(user_input: str):
     """通常の会話処理"""
     try:
-        # セッションから必要な情報を取得
-        message_history = ui.get_session("message_history", [])
+        # Chainlitのネイティブなメッセージコンテキストを使用
+        message_history = cl.chat_context.to_openai()
         system_prompt = ui.get_session("system_prompt", "")
         settings = ui.get_session("settings", {})
         
-        # ユーザーメッセージを履歴に追加
-        user_message = {"role": "user", "content": user_input}
-        message_history.append(user_message)
-        ui.set_session("message_history", message_history)
-        
         # ツール設定を準備
-        tools_config.set_vector_store_ids(ui.get_session("vector_store_ids", {}))
-        tools = tools_config.get_tools_for_request()
+        vector_store_ids = ui.get_session("vector_store_ids", {})
+        if vector_store_ids:
+            # ベクトルストアIDを文字列として渡す
+            vs_id_string = ",".join([v for v in vector_store_ids.values() if v])
+            tools_config.update_vector_store_ids(vs_id_string)
+        tools = tools_config.get_enabled_tools()
         
         # レスポンス生成（Responses API使用）
         loading_msg = await ui.show_loading_message("回答を生成中...")
         
-        response_data = await responses_handler.create_response(
-            messages=message_history,
-            system_prompt=system_prompt,
-            model=settings.get("DEFAULT_MODEL", "gpt-4o-mini"),
-            temperature=settings.get("temperature", 0.7),
-            tools=tools,
-            stream=settings.get("stream", True)
+        # セッションから最新設定を取得
+        current_model = settings.get("Model", settings.get("DEFAULT_MODEL", "gpt-4o-mini"))
+        current_temperature = ui.get_session("temperature", settings.get("Temperature", 0.7))
+        current_system_prompt = ui.get_session("system_prompt", system_prompt)
+        
+        # OpenAI Responses API用に履歴を処理
+        # - systemメッセージは除外（instructionsで別途送信）
+        # - assistantメッセージも除外（OpenAIが管理）
+        user_messages = [msg for msg in message_history if msg.get("role") == "user"]
+        
+        # ストリーミングレスポンス処理（Chainlitの標準パターン）
+        # 会話継続のためのprevious_response_idを取得
+        previous_response_id = ui.get_session("previous_response_id")
+        
+        response_generator = responses_handler.create_response(
+            messages=user_messages,  # ユーザーメッセージのみ渡す
+            model=current_model,
+            temperature=current_temperature,
+            use_tools=True,  # Tools機能を有効化
+            stream=settings.get("stream", True),
+            previous_response_id=previous_response_id,  # 会話継続のためのID
+            instructions=current_system_prompt  # システムプロンプトをinstructionsで渡す
         )
         
-        if response_data.get("success"):
-            assistant_message = response_data.get("content", "応答の取得に失敗しました")
-            
-            # アシスタントメッセージを履歴に追加
-            message_history.append({"role": "assistant", "content": assistant_message})
-            ui.set_session("message_history", message_history)
-            
-            # レスポンスIDを保存（会話の継続性）
-            if response_data.get("response_id"):
-                ui.set_session("previous_response_id", response_data["response_id"])
-            
-            await ui.update_loading_message(loading_msg, assistant_message)
-            
-        else:
-            error_message = response_data.get("error", "不明なエラーが発生しました")
-            await ui.update_loading_message(loading_msg, f"❌ エラー: {error_message}")
+        # ローディングメッセージを削除
+        if loading_msg:
+            await loading_msg.remove()
         
-        app_logger.info("会話処理完了", history_length=len(message_history))
+        # Chainlitの標準的なストリーミングメッセージを作成
+        msg = cl.Message(content="")
+        
+        assistant_message = ""
+        try:
+            async for chunk in response_generator:
+                if chunk and chunk.get("content"):
+                    chunk_content = chunk.get("content", "")
+                    assistant_message += chunk_content
+                    # Chainlitの標準ストリーミング方式
+                    await msg.stream_token(chunk_content)
+                
+                # レスポンスIDを保存（会話の継続性）
+                if chunk and chunk.get("response_id"):
+                    response_id = chunk["response_id"]
+                    ui.set_session("previous_response_id", response_id)
+                    
+                    # Chainlitスレッドのメタデータにも保存（永続化）
+                    try:
+                        thread_id = ui.get_session("thread_id")
+                        if thread_id:
+                            # スレッドメタデータを更新
+                            await cl.update_thread(
+                                thread_id=thread_id,
+                                metadata={"previous_response_id": response_id}
+                            )
+                    except Exception as meta_error:
+                        app_logger.debug(f"メタデータ更新エラー: {meta_error}")
+            
+            # ストリーミング完了 - メッセージを確定・記録
+            await msg.send()
+                
+            # 注意: cl.chat_contextが自動的に履歴を管理するため、手動更新は不要
+                
+        except Exception as e:
+            # エラー時は通常のメッセージとして送信
+            await cl.Message(content=f"❌ エラー: {str(e)}").send()
+        
+        app_logger.info("会話処理完了")
         
     except Exception as e:
         await error_handler.handle_unexpected_error(e, "会話処理")
@@ -452,52 +660,7 @@ def _get_persona_handler():
     return persona_handler_instance
 
 
-@cl.on_chat_resume
-async def chat_resume(thread: ThreadDict):
-    """チャット再開時の処理"""
-    try:
-        app_logger.info("チャット再開", thread_id=thread["id"])
-        
-        user = cl.user_session.get("user")
-        user_id = user.identifier if user else "anonymous"
-        
-        # セッション復元
-        await _restore_session_from_thread(thread, user_id)
-        
-        await ui.send_info_message("チャットを再開しました")
-        
-    except Exception as e:
-        await error_handler.handle_unexpected_error(e, "チャット再開")
-
-
-async def _restore_session_from_thread(thread: ThreadDict, user_id: str):
-    """スレッドからセッションを復元"""
-    try:
-        # 基本セッション情報
-        ui.set_session("thread_id", thread["id"])
-        ui.set_session("user_id", user_id)
-        
-        # メッセージ履歴の復元（データレイヤーから）
-        if data_layer_instance:
-            try:
-                elements = await data_layer_instance.get_thread_elements(thread["id"])
-                messages = []
-                for element in elements:
-                    if hasattr(element, 'content'):
-                        role = "user" if element.type == "user_message" else "assistant"
-                        messages.append({"role": role, "content": element.content})
-                ui.set_session("message_history", messages)
-            except Exception as e:
-                app_logger.warning("履歴復元エラー", error=str(e))
-                ui.set_session("message_history", [])
-        
-        # ベクトルストア情報復元
-        await _initialize_vector_stores(user_id, thread)
-        
-        app_logger.info("セッション復元完了", thread_id=thread["id"])
-        
-    except Exception as e:
-        app_logger.error("セッション復元エラー", error=str(e))
+# 重複していた古い@cl.on_chat_resumeを削除済み
 
 
 @cl.on_chat_end
@@ -510,8 +673,10 @@ async def chat_end():
         await vector_store_commands.cleanup_session_resources()
         
         # WebSocket接続の監視を停止
-        if connection_monitor:
+        if connection_monitor and hasattr(connection_monitor, 'stop_monitoring'):
             connection_monitor.stop_monitoring()
+        elif connection_monitor:
+            app_logger.debug("ConnectionMonitorのstop_monitoring メソッドが利用できません")
             
         app_logger.info("チャット終了処理完了")
         
