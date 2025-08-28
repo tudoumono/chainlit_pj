@@ -34,6 +34,7 @@ import aiofiles
 import mimetypes
 from pathlib import Path
 import chainlit as cl
+from utils.project_settings import get_app_settings, get_project_paths, get_mime_settings
 from utils.vector_store_api_helper import (
     get_vector_store_api,
     get_vector_store_files_api,
@@ -43,6 +44,11 @@ from utils.vector_store_api_helper import (
     safe_delete_vector_store,
     safe_update_vector_store
 )
+
+# 設定システムから取得
+_app_settings = get_app_settings()
+_project_paths = get_project_paths()
+_mime_settings = get_mime_settings()
 
 
 class VectorStoreHandler:
@@ -56,33 +62,10 @@ class VectorStoreHandler:
     - Responses API対応
     """
     
-    # サポートされるファイル形式（公式ドキュメント準拠）
-    SUPPORTED_FILE_TYPES = {
-        # テキスト形式
-        '.c': 'text/x-c',
-        '.cpp': 'text/x-c++',
-        '.cs': 'text/x-csharp',
-        '.css': 'text/css',
-        '.go': 'text/x-golang',
-        '.html': 'text/html',
-        '.java': 'text/x-java',
-        '.js': 'text/javascript',
-        '.json': 'application/json',
-        '.md': 'text/markdown',
-        '.php': 'text/x-php',
-        '.py': 'text/x-python',
-        '.rb': 'text/x-ruby',
-        '.sh': 'application/x-sh',
-        '.tex': 'text/x-tex',
-        '.ts': 'application/typescript',
-        '.txt': 'text/plain',
-        
-        # ドキュメント形式
-        '.doc': 'application/msword',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        '.pdf': 'application/pdf',
-        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    }
+    @property
+    def SUPPORTED_FILE_TYPES(self) -> Dict[str, str]:
+        """サポートされるファイル形式（設定から取得）"""
+        return self._mime_settings.all_types
     
     def __init__(self):
         """初期化"""
@@ -1463,7 +1446,7 @@ class VectorStoreHandler:
                 return None
             
             # 一時保存ディレクトリを作成
-            upload_dir = Path("/root/mywork/chainlit_pj/uploads")
+            upload_dir = self._app_settings.upload_dir
             upload_dir.mkdir(exist_ok=True)
             
             # ファイル名の安全化
@@ -1540,7 +1523,7 @@ class VectorStoreHandler:
         """
         try:
             # tools_config.jsonを読み込み
-            tools_config_path = "/root/mywork/chainlit_pj/.chainlit/tools_config.json"
+            tools_config_path = self._project_paths.TOOLS_CONFIG_PATH
             if not os.path.exists(tools_config_path):
                 return []
             
