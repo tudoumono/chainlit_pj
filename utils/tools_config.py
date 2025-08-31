@@ -331,21 +331,22 @@ class ToolsConfig:
             if session and self.is_layer_enabled("thread"):
                 print(f"🔍 [DEBUG] チャットVS層有効")
                 # 複数の方法で取得を試みる
-                session_vs_id = session.get("session_vs_id")
-                print(f"🔍 [DEBUG] session_vs_id直接: {session_vs_id[:8] if session_vs_id else 'None'}...")
+                chat_vs_id = session.get("chat_vs_id")
+                print(f"🔍 [DEBUG] chat_vs_id直接: {chat_vs_id[:8] if chat_vs_id else 'None'}...")
                 
-                if not session_vs_id:
-                    session_vs_id = session.get("thread_vs_id")
-                    print(f"🔍 [DEBUG] thread_vs_id: {session_vs_id[:8] if session_vs_id else 'None'}...")
+                if not chat_vs_id:
+                    # 互換性のため古い名前もチェック
+                    chat_vs_id = session.get("session_vs_id") or session.get("thread_vs_id")
+                    print(f"🔍 [DEBUG] 互換性チェック: {chat_vs_id[:8] if chat_vs_id else 'None'}...")
                 
-                if not session_vs_id:
+                if not chat_vs_id:
                     vs_ids = session.get("vector_store_ids", {})
-                    session_vs_id = vs_ids.get("session") or vs_ids.get("thread")
-                    print(f"🔍 [DEBUG] vs_ids辞書から: {session_vs_id[:8] if session_vs_id else 'None'}...")
+                    chat_vs_id = vs_ids.get("chat") or vs_ids.get("session") or vs_ids.get("thread")
+                    print(f"🔍 [DEBUG] vs_ids辞書から: {chat_vs_id[:8] if chat_vs_id else 'None'}...")
                 
-                if session_vs_id and session_vs_id.strip():
-                    vector_store_ids.append(session_vs_id.strip())
-                    print(f"✅ セッションVSを検索対象に追加: {session_vs_id[:8]}...")
+                if chat_vs_id and chat_vs_id.strip():
+                    vector_store_ids.append(chat_vs_id.strip())
+                    print(f"✅ チャットVSを検索対象に追加: {chat_vs_id[:8]}...")
             
             # vector_store_idsが空の場合はfile_searchツールを追加しない
             # OpenAI APIは空のvector_store_idsを許可しないため

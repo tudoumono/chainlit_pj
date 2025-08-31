@@ -1344,13 +1344,13 @@ class VectorStoreHandler:
         try:
             name = f"Chat VS - {thread_id[:8]} - {datetime.now().strftime('%H%M')}"
             
-            # メタデータに自動削除情報を含める
+            # メタデータに自動削除情報を含める（OpenAI APIは文字列のみ受け入れ）
             metadata = {
                 "thread_id": thread_id,
                 "type": "chat",
                 "created_at": datetime.now().isoformat(),
                 "auto_delete_at": (datetime.now() + timedelta(hours=self.auto_delete_hours)).isoformat(),
-                "temporary": True
+                "temporary": "true"  # ブール値から文字列に変更
             }
             
             # APIヘルパーを使用してベクトルストアを作成
@@ -1364,8 +1364,8 @@ class VectorStoreHandler:
                 metadata=metadata
             )
             
-            # セッションキャッシュに保存
-            cache_key = f"session:{session_id}"
+            # チャットキャッシュに保存
+            cache_key = f"chat:{thread_id}"
             self._session_vs_cache[cache_key] = {
                 "vs_id": vector_store.id,
                 "created_at": datetime.now(),
@@ -1615,22 +1615,33 @@ class VectorStoreHandler:
                 print("⚠️ アクティブなベクトルストアが設定されていません")
                 print("🔧 セッション用ベクトルストアを自動作成します...")
                 
-                # チャット用ベクトルストアを自動作成
+                # チャット用ベクトルストアを自動作成（自動削除機能付き）
                 try:
                     import chainlit as cl
                     thread_id = cl.user_session.get("thread_id", "unknown_thread")
                 except:
                     thread_id = "default_session"  # フォールバック
-                    
-                vs_name = f"チャット_{thread_id[:8]}_{datetime.now().strftime('%Y%m%d_%H%M')}"
                 
-                vs_id = await self.create_vector_store(vs_name)
+                print(f"🔧 ファイルアップロード用チャットベクトルストア作成: {thread_id[:8]}...")
+                vs_id = await self.create_session_vector_store_with_auto_delete(thread_id)
                 if vs_id:
-                    print(f"✅ セッション用ベクトルストア作成: {vs_id}")
+                    print(f"✅ チャット用ベクトルストア作成（ファイルアップロード時）: {vs_id}")
                     active_ids = [vs_id]
                     
-                    # ベクトルストアIDをチャット（thread）に保存（将来の使用のため）
+                    # ベクトルストアIDをチャット（thread）に保存
                     self.session_vs_ids[thread_id] = vs_id
+                    
+                    # データベースのスレッドテーブルにベクトルストアIDを保存（チャット削除時の自動削除用）
+                    try:
+                        # data_layer経由でベクトルストアIDを保存
+                        from data_layer import data_layer_instance
+                        if data_layer_instance:
+                            await data_layer_instance.update_thread_vector_store(thread_id, vs_id)
+                            print(f"✅ スレッドベクトルストアID保存: {thread_id[:8]}...")
+                        else:
+                            print("⚠️ data_layer_instanceが利用できません")
+                    except Exception as db_error:
+                        print(f"⚠️ スレッドベクトルストアID保存失敗: {db_error}")
                 else:
                     print("❌ ベクトルストア作成に失敗しました")
                     return

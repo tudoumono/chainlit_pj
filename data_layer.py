@@ -1007,12 +1007,14 @@ class SQLiteDataLayer(BaseDataLayer):
                 vector_store_id = thread_data["vector_store_id"]
                 
                 # メタデータからも取得を試行（新しい実装対応）
-                if not vector_store_id and thread_data.get("metadata"):
+                if not vector_store_id and thread_data["metadata"]:
                     try:
                         import json
-                        metadata = json.loads(thread_data["metadata"]) if isinstance(thread_data["metadata"], str) else thread_data["metadata"]
-                        vector_store_id = metadata.get("vector_store_id")
-                        print(f"🔍 [DEBUG] メタデータからベクトルストアID取得: {vector_store_id}")
+                        metadata_raw = thread_data["metadata"]
+                        if metadata_raw:
+                            metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
+                            vector_store_id = metadata.get("vector_store_id") if isinstance(metadata, dict) else None
+                            print(f"🔍 [DEBUG] メタデータからベクトルストアID取得: {vector_store_id}")
                     except Exception as meta_error:
                         print(f"⚠️ [DEBUG] メタデータ解析エラー: {meta_error}")
                 

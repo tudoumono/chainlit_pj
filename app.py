@@ -215,29 +215,11 @@ async def _initialize_vector_stores(user_id: str, thread: dict):
         if data_layer_instance and hasattr(data_layer_instance, 'get_user_vector_store_id'):
             personal_vs_id = await data_layer_instance.get_user_vector_store_id(user_id)
         
-        # Chat層（チャット専用ベクトルストア）- 新規チャット時に自動作成
+        # Chat層（チャット専用ベクトルストア）- ファイルアップロード時に作成
         thread_id = ui.get_session("thread_id")
         chat_vs_id = thread.get("vector_store_id")
         
-        # 新規チャットの場合、専用ベクトルストアを作成
-        if not chat_vs_id and thread_id:
-            try:
-                app_logger.info(f"🔧 新規チャット用ベクトルストア作成開始: {thread_id[:8]}...")
-                chat_vs_id = await vector_store_handler.create_session_vector_store_with_auto_delete(thread_id)
-                if chat_vs_id:
-                    app_logger.info(f"✅ チャット専用ベクトルストア作成完了: {chat_vs_id[:8]}...")
-                    # Chainlitスレッドメタデータにも保存（永続化）
-                    try:
-                        await cl.update_thread(
-                            thread_id=thread_id,
-                            metadata={"vector_store_id": chat_vs_id}
-                        )
-                    except Exception as meta_error:
-                        app_logger.warning(f"スレッドメタデータ更新失敗: {meta_error}")
-                else:
-                    app_logger.warning("チャット用ベクトルストア作成に失敗")
-            except Exception as vs_error:
-                app_logger.error(f"チャット用ベクトルストア作成エラー: {vs_error}")
+        # Note: チャット専用ベクトルストアはファイルアップロード時に自動作成されます
         
         # セッションに保存
         vs_ids = {
@@ -580,17 +562,15 @@ async def _process_conversation(user_input: str):
                     response_id = chunk["response_id"]
                     ui.set_session("previous_response_id", response_id)
                     
-                    # Chainlitスレッドのメタデータにも保存（永続化）
+                    # データベースのスレッドテーブルに永続化（将来の使用のため）
                     try:
                         thread_id = ui.get_session("thread_id")
-                        if thread_id:
-                            # スレッドメタデータを更新
-                            await cl.update_thread(
-                                thread_id=thread_id,
-                                metadata={"previous_response_id": response_id}
-                            )
+                        if thread_id and data_layer_instance:
+                            # Note: 現在はprevious_response_idの保存機能は未実装
+                            # 必要に応じてdata_layerに追加のメソッドを実装
+                            pass
                     except Exception as meta_error:
-                        app_logger.debug(f"メタデータ更新エラー: {meta_error}")
+                        app_logger.debug(f"スレッド情報更新エラー: {meta_error}")
             
             # ストリーミング完了 - メッセージを確定・記録
             await msg.send()
