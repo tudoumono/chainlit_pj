@@ -48,7 +48,7 @@ import aiofiles
 import mimetypes
 from pathlib import Path
 import chainlit as cl
-from utils.project_settings import get_app_settings, get_project_paths, get_mime_settings
+# from utils.project_settings import get_app_settings, get_project_paths, get_mime_settings
 from utils.vector_store_api_helper import (
     get_vector_store_api,
     get_vector_store_files_api,
@@ -59,10 +59,10 @@ from utils.vector_store_api_helper import (
     safe_update_vector_store
 )
 
-# 設定システムから取得
-_app_settings = get_app_settings()
-_project_paths = get_project_paths()
-_mime_settings = get_mime_settings()
+# 設定システムから取得（一時的にコメントアウト）
+# _app_settings = get_app_settings()
+# _project_paths = get_project_paths()
+# _mime_settings = get_mime_settings()
 
 
 class VectorStoreHandler:
@@ -100,7 +100,33 @@ class VectorStoreHandler:
             Dict[str, str]: ファイル拡張子とMIME型の対応辞書
                            例: {'.txt': 'text/plain', '.pdf': 'application/pdf'}
         """
-        return self._mime_settings.all_types
+        # 一時的にハードコーディング（設定システム修正後に元に戻す）
+        return {
+            # テキスト形式
+            '.c': 'text/x-c',
+            '.cpp': 'text/x-c++',
+            '.cs': 'text/x-csharp',
+            '.css': 'text/css',
+            '.go': 'text/x-golang',
+            '.html': 'text/html',
+            '.java': 'text/x-java',
+            '.js': 'text/javascript',
+            '.json': 'application/json',
+            '.md': 'text/markdown',
+            '.php': 'text/x-php',
+            '.py': 'text/x-python',
+            '.rb': 'text/x-ruby',
+            '.sh': 'application/x-sh',
+            '.tex': 'text/x-tex',
+            '.ts': 'application/typescript',
+            '.txt': 'text/plain',
+            
+            # ドキュメント形式
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.pdf': 'application/pdf',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        }
     
     def __init__(self):
         """クラスの初期化処理
@@ -1549,7 +1575,7 @@ class VectorStoreHandler:
                 return None
             
             # 一時保存ディレクトリを作成
-            upload_dir = self._app_settings.upload_dir
+            upload_dir = Path("/root/mywork/chainlit_pj/uploads")
             upload_dir.mkdir(exist_ok=True)
             
             # ファイル名の安全化
@@ -1587,8 +1613,22 @@ class VectorStoreHandler:
             
             if not active_ids:
                 print("⚠️ アクティブなベクトルストアが設定されていません")
-                print("💡 ファイルは保存されました。ベクトルストア設定後に追加可能です")
-                return
+                print("🔧 セッション用ベクトルストアを自動作成します...")
+                
+                # セッション用ベクトルストアを自動作成
+                session_id = "default_session"  # TODO: セッション管理から取得
+                vs_name = f"セッション_{session_id}_{datetime.now().strftime('%Y%m%d')}"
+                
+                vs_id = await self.create_vector_store(vs_name)
+                if vs_id:
+                    print(f"✅ セッション用ベクトルストア作成: {vs_id}")
+                    active_ids = [vs_id]
+                    
+                    # ベクトルストアIDをセッションに保存（将来の使用のため）
+                    self.session_vs_ids[session_id] = vs_id
+                else:
+                    print("❌ ベクトルストア作成に失敗しました")
+                    return
             
             client = OpenAI()
             
@@ -1626,7 +1666,7 @@ class VectorStoreHandler:
         """
         try:
             # tools_config.jsonを読み込み
-            tools_config_path = self._project_paths.TOOLS_CONFIG_PATH
+            tools_config_path = "/root/mywork/chainlit_pj/.chainlit/tools_config.json"
             if not os.path.exists(tools_config_path):
                 return []
             

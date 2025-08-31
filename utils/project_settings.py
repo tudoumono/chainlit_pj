@@ -5,9 +5,39 @@ Pydanticベースの型安全な設定管理システム
 
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-from pydantic import BaseSettings, Field, validator, root_validator
-from dataclasses import dataclass
 import os
+
+# Pydantic v2対応: BaseSettingsはpydantic-settingsパッケージから
+try:
+    from pydantic_settings import BaseSettings
+    from pydantic import Field, validator, root_validator
+except ImportError:
+    # フォールバック: 古いpydantic v1
+    try:
+        from pydantic import BaseSettings, Field, validator, root_validator
+    except ImportError:
+        # pydantic-settingsがない場合の最低限の実装
+        print("⚠️ pydantic-settingsが見つかりません。設定システムをインストールしてください:")
+        print("   pip install pydantic-settings")
+        
+        # 最低限のダミークラス
+        class BaseSettings:
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+        
+        def Field(*args, **kwargs):
+            return kwargs.get('default', None)
+        
+        def validator(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
+        
+        def root_validator(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
 
 
 class ProjectPaths:

@@ -87,6 +87,25 @@ class ConnectionMonitor:
             'connections': list(self.active_connections.keys()),
             'last_error': self.connection_errors[-1] if self.connection_errors else None
         }
+    
+    def stop_monitoring(self):
+        """監視を停止（クリーンアップ処理）"""
+        logger.info(f"[SHUTDOWN] ConnectionMonitor停止中...")
+        
+        # アクティブな接続をログに記録
+        if self.active_connections:
+            logger.info(f"[SHUTDOWN] {len(self.active_connections)}個のアクティブ接続を終了します")
+            for session_id in list(self.active_connections.keys()):
+                self.log_disconnection(session_id, "アプリケーション終了")
+        
+        # 統計情報をログに記録
+        logger.info(f"[SHUTDOWN] 終了時統計: エラー{len(self.connection_errors)}件")
+        
+        # リストをクリア
+        self.active_connections.clear()
+        self.connection_errors.clear()
+        
+        logger.info(f"[SHUTDOWN] ConnectionMonitor停止完了")
 
 
 # グローバルモニターインスタンス

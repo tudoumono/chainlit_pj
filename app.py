@@ -470,8 +470,17 @@ async def message_handler(message: cl.Message):
         app_logger.info("メッセージ受信", content_length=len(user_input))
         
         # ファイルアップロード処理（メッセージに添付されている場合）
+        # 公式ドキュメント準拠: message.elementsでファイル存在をチェック
         if message.elements:
             await handle_file_upload(message)
+            
+            # Chainlit公式パターン: ファイルのみアップロードの場合は会話処理をスキップ
+            # 空メッセージまたは非常に短いメッセージの場合
+            if not user_input or len(user_input.strip()) <= 2:
+                app_logger.info("ファイルのみのアップロード", 
+                              content_length=len(user_input), 
+                              files_count=len(message.elements))
+                return
         
         # コマンド処理
         if user_input.startswith("/"):
@@ -479,7 +488,8 @@ async def message_handler(message: cl.Message):
             return
         
         # 通常の会話処理
-        await _process_conversation(user_input)
+        if user_input:  # 空でない場合のみ会話処理を実行
+            await _process_conversation(user_input)
         
     except Exception as e:
         await error_handler.handle_unexpected_error(e, "メッセージ処理")
@@ -577,9 +587,11 @@ async def _process_conversation(user_input: str):
 
 
 async def handle_file_upload(message: cl.Message):
-    """メッセージに添付されたファイルの処理"""
+    """メッセージに添付されたファイルの処理（Chainlit公式ドキュメント準拠）"""
     try:
+        # 公式ドキュメント準拠: elements存在チェック
         if not message.elements:
+            await ui.send_info_message("📎 ファイルが添付されていません")
             return
         
         app_logger.info("ファイル処理開始", count=len(message.elements))
@@ -588,23 +600,43 @@ async def handle_file_upload(message: cl.Message):
         from utils.vector_store_handler import vector_store_handler
         
         success_count = 0
+        failed_files = []
+        
         for element in message.elements:
-            if hasattr(element, 'mime') and hasattr(element, 'path'):
+            # 公式ドキュメント準拠: mime属性とpath属性の確認
+            if hasattr(element, 'mime') and hasattr(element, 'path') and hasattr(element, 'name'):
                 try:
+                    app_logger.debug(f"処理中のファイル: {element.name} ({element.mime})")
+                    
                     # ファイル保存とベクトルストア追加
                     saved_path = await vector_store_handler.save_uploaded_file(element)
                     if saved_path:
                         success_count += 1
-                        app_logger.info("ファイル保存完了", name=element.name, path=saved_path)
+                        app_logger.info("ファイル保存完了", name=element.name, path=saved_path, mime=element.mime)
+                    else:
+                        failed_files.append(element.name)
+                        
                 except Exception as e:
+                    failed_files.append(element.name)
                     app_logger.error("ファイル処理エラー", name=element.name, error=str(e))
+            else:
+                app_logger.warning("無効なファイル要素", element=str(element))
+                failed_files.append(getattr(element, 'name', 'Unknown'))
         
+        # 結果通知（公式ドキュメント準拠の詳細フィードバック）
         if success_count > 0:
             await ui.send_success_message(
-                f"📁 {success_count}個のファイルをアップロードし、ベクトルストアに追加しました。"
+                f"📁 {success_count}個のファイルを正常にアップロードし、ベクトルストアに追加しました。"
             )
-        else:
-            await ui.send_info_message("ファイルが検出されましたが、処理できませんでした。")
+            
+        if failed_files:
+            await ui.send_warning_message(
+                f"⚠️ {len(failed_files)}個のファイルの処理に失敗しました: {', '.join(failed_files[:3])}"
+                + ("..." if len(failed_files) > 3 else "")
+            )
+            
+        if success_count == 0 and not failed_files:
+            await ui.send_info_message("ファイルが検出されましたが、処理対象のファイルがありませんでした。")
             
     except Exception as e:
         await error_handler.handle_unexpected_error(e, "ファイル処理")

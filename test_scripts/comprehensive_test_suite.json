@@ -2,7 +2,7 @@
   "metadata": {
     "name": "Chainlit多機能AIワークスペース 包括的テストスイート",
     "version": "1.0.0",
-    "created": "2025-08-28T10:07:30.508380",
+    "created": "2025-08-28T21:26:08.054304",
     "total_categories": 12,
     "description": "Chainlitアプリケーションの全機能を網羅的にテストするためのテストスイート"
   },
