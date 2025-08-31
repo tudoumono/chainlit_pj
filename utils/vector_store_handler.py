@@ -1621,8 +1621,10 @@ class VectorStoreHandler:
                 
                 # チャット用ベクトルストアを自動作成（自動削除機能付き）
                 try:
-                    import chainlit as cl
-                    thread_id = cl.user_session.get("thread_id", "unknown_thread")
+                    from utils.ui_helper import ChainlitHelper as ui
+                    thread_id = ui.get_session("thread_id")
+                    if not thread_id:
+                        thread_id = "unknown_thread"
                 except:
                     thread_id = "default_session"  # フォールバック
                 
