@@ -1639,6 +1639,21 @@ class VectorStoreHandler:
                     
                     # データベースのスレッドテーブルにベクトルストアIDを保存（チャット削除時の自動削除用）
                     try:
+                        # 現在のChainlitコンテキストから実際のthread_idを取得
+                        import chainlit as cl
+                        actual_thread_id = None
+                        try:
+                            if hasattr(cl.context, 'session') and hasattr(cl.context.session, 'thread_id'):
+                                actual_thread_id = cl.context.session.thread_id
+                        except:
+                            pass
+                        
+                        # 実際のthread_idが取得できない場合はセッションから取得したものを使用
+                        if not actual_thread_id:
+                            actual_thread_id = thread_id
+                            
+                        print(f"🔧 [DEBUG] 保存対象thread_id: セッション={thread_id[:8]}, 実際={actual_thread_id[:8] if actual_thread_id else 'None'}")
+                        
                         # 直接SQLiteデータベースに更新（循環インポート回避）
                         import aiosqlite
                         db_path = ".chainlit/chainlit.db"
@@ -1647,9 +1662,15 @@ class VectorStoreHandler:
                                 UPDATE threads 
                                 SET vector_store_id = ?, updated_at = CURRENT_TIMESTAMP
                                 WHERE id = ?
-                            """, (vs_id, thread_id))
-                            await db.commit()
-                        print(f"✅ スレッドベクトルストアID保存: {thread_id[:8]}...")
+                            """, (vs_id, actual_thread_id))
+                            result = await db.commit()
+                            
+                            # 更新されたレコード数を確認
+                            cursor = await db.execute("SELECT changes()")
+                            changes = await cursor.fetchone()
+                            print(f"🔧 [DEBUG] データベース更新件数: {changes[0] if changes else 0}件")
+                            
+                        print(f"✅ スレッドベクトルストアID保存: actual_thread={actual_thread_id[:8]}... vs_id={vs_id}")
                     except Exception as db_error:
                         print(f"⚠️ スレッドベクトルストアID保存失敗: {db_error}")
                 else:
