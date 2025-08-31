@@ -7,7 +7,7 @@
   },
   "tools": {
     "web_search": {
-      "enabled": false,
+      "enabled": true,
       "name": "web_search",
       "description": "Search the web for current information",
       "auto_invoke": true

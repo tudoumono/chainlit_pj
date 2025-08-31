@@ -222,19 +222,27 @@ class ResponsesAPIHandler:
         # Responses APIパラメータを構築
         response_params = {
             "model": model,
-            "input": input_content,
             "temperature": temperature,
             "stream": stream,
+            "store": True,  # 会話継続に必要：レスポンスを保存
             **kwargs
         }
+        
+        # inputの設定：previous_response_idがある場合は新しいメッセージのみ
+        if previous_response_id:
+            # 会話継続時：最新のユーザーメッセージのみを送信
+            if messages and messages[-1].get("role") == "user":
+                response_params["input"] = [messages[-1]]  # 配列形式
+            else:
+                response_params["input"] = input_content  # フォールバック
+            response_params["previous_response_id"] = previous_response_id
+        else:
+            # 新しい会話開始時：全メッセージ履歴
+            response_params["input"] = messages if isinstance(messages, list) else input_content
         
         # instructionsを設定（システムプロンプト）
         if instructions:
             response_params["instructions"] = instructions
-        
-        # 会話継続用のresponse_id
-        if previous_response_id:
-            response_params["previous_response_id"] = previous_response_id
         
         if max_tokens:
             response_params["max_tokens"] = max_tokens
@@ -243,14 +251,13 @@ class ResponsesAPIHandler:
         tools = []
         if use_tools and self.tools_config.is_enabled():
             # Web検索ツール
-            if self.tools_config.get_setting("web_search_enabled", False):
+            if self.tools_config.is_tool_enabled("web_search"):
                 tools.append({
-                    "type": "web_search",
-                    "enabled": True
+                    "type": "web_search"
                 })
             
             # ファイル検索ツール（ベクトルストア）
-            if self.tools_config.get_setting("file_search_enabled", False):
+            if self.tools_config.is_tool_enabled("file_search"):
                 vector_store_ids = vector_store_handler.get_active_vector_store_ids()
                 if vector_store_ids:
                     tools.append({

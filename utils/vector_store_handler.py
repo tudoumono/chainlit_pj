@@ -25,6 +25,7 @@ Phase 7: OpenAI File Search APIを使った三層ナレッジベース管理
 
 import os
 import json
+import shutil
 from typing import Dict, List, Optional, Tuple, Any
 from openai import OpenAI, AsyncOpenAI
 import asyncio
@@ -1445,6 +1446,138 @@ class VectorStoreHandler:
         
         # 重複を除去
         return list(set(ids))
+    
+    async def save_uploaded_file(self, element) -> Optional[str]:
+        """
+        Chainlitでアップロードされたファイルをベクトルストアに保存
+        
+        Args:
+            element: Chainlitのファイル要素
+            
+        Returns:
+            保存されたファイルパス（成功時）、None（失敗時）
+        """
+        try:
+            if not hasattr(element, 'path') or not hasattr(element, 'name'):
+                print(f"❌ 無効なファイル要素: {element}")
+                return None
+            
+            # 一時保存ディレクトリを作成
+            upload_dir = Path("/root/mywork/chainlit_pj/uploads")
+            upload_dir.mkdir(exist_ok=True)
+            
+            # ファイル名の安全化
+            import re
+            safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', element.name)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            final_name = f"{timestamp}_{safe_name}"
+            
+            # ファイルを一時ディレクトリにコピー
+            final_path = upload_dir / final_name
+            shutil.copy2(element.path, final_path)
+            
+            print(f"✅ ファイル保存完了: {final_path}")
+            
+            # アクティブなベクトルストアに追加
+            await self._add_file_to_active_vector_stores(str(final_path), element.name)
+            
+            return str(final_path)
+            
+        except Exception as e:
+            print(f"❌ ファイル保存エラー: {e}")
+            return None
+    
+    async def _add_file_to_active_vector_stores(self, file_path: str, original_name: str):
+        """
+        ファイルをアクティブなベクトルストアに追加
+        
+        Args:
+            file_path: 保存されたファイルパス
+            original_name: 元のファイル名
+        """
+        try:
+            # 現在アクティブなベクトルストアIDを取得
+            active_ids = self.get_active_vector_store_ids()
+            
+            if not active_ids:
+                print("⚠️ アクティブなベクトルストアが設定されていません")
+                print("💡 ファイルは保存されました。ベクトルストア設定後に追加可能です")
+                return
+            
+            client = OpenAI()
+            
+            # ファイルをOpenAI Files APIにアップロード
+            with open(file_path, "rb") as f:
+                file_obj = client.files.create(
+                    file=f,
+                    purpose="assistants"
+                )
+            
+            print(f"✅ OpenAI Filesにアップロード: {file_obj.id}")
+            
+            # 各アクティブベクトルストアに追加
+            for vs_id in active_ids:
+                try:
+                    client.beta.vector_stores.files.create(
+                        vector_store_id=vs_id,
+                        file_id=file_obj.id
+                    )
+                    print(f"✅ ベクトルストア {vs_id[:8]}... にファイル追加: {original_name}")
+                    
+                except Exception as vs_error:
+                    print(f"❌ ベクトルストア {vs_id[:8]}... へのファイル追加エラー: {vs_error}")
+                    continue
+            
+        except Exception as e:
+            print(f"❌ ベクトルストアへのファイル追加エラー: {e}")
+    
+    def get_active_vector_store_ids(self) -> List[str]:
+        """
+        現在アクティブなベクトルストアIDを取得（Tools設定に基づく）
+        
+        Returns:
+            アクティブなベクトルストアIDのリスト
+        """
+        try:
+            # tools_config.jsonを読み込み
+            tools_config_path = "/root/mywork/chainlit_pj/.chainlit/tools_config.json"
+            if not os.path.exists(tools_config_path):
+                return []
+            
+            with open(tools_config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # ファイル検索が有効かつベクトルストアIDが設定されている場合
+            file_search = config.get("tools", {}).get("file_search", {})
+            if not file_search.get("enabled", False):
+                return []
+            
+            vector_store_ids = file_search.get("vector_store_ids", [])
+            
+            # 空の場合はデフォルトベクトルストアを使用
+            if not vector_store_ids:
+                # セッション層、個人層、会社層の順で検索
+                defaults = []
+                
+                # セッション層
+                if self.session_vs_ids:
+                    defaults.extend(list(self.session_vs_ids.values()))
+                
+                # 個人層
+                if self.personal_vs_ids:
+                    defaults.extend(list(self.personal_vs_ids.values()))
+                
+                # 会社層
+                if self.company_vs_id:
+                    defaults.append(self.company_vs_id)
+                
+                return defaults[:1]  # 最初の1つのみ使用
+            
+            return vector_store_ids
+            
+        except Exception as e:
+            print(f"❌ アクティブベクトルストア取得エラー: {e}")
+            return []
 
 
 # グローバルインスタンス
