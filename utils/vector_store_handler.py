@@ -552,7 +552,7 @@ class VectorStoreHandler:
                 
             except AttributeError:
                 # Beta APIにフォールバック
-                files = await self.async_client.beta.vector_stores.files.list(
+                files = await self.async_client.vector_stores.files.list(
                     vector_store_id=vector_store_id
                 )
                 
@@ -594,7 +594,7 @@ class VectorStoreHandler:
                 
             except AttributeError:
                 # Beta APIにフォールバック
-                await self.async_client.beta.vector_stores.delete(
+                await self.async_client.vector_stores.delete(
                     vector_store_id=vector_store_id
                 )
                 print(f"✅ ベクトルストア削除（Beta API）: {vector_store_id}")
@@ -639,7 +639,7 @@ class VectorStoreHandler:
                 
             except AttributeError:
                 # Beta APIにフォールバック
-                await self.async_client.beta.vector_stores.update(
+                await self.async_client.vector_stores.update(
                     vector_store_id=vector_store_id,
                     name=new_name
                 )
@@ -998,7 +998,7 @@ class VectorStoreHandler:
             except AttributeError:
                 # Beta APIにフォールバック
                 print(f"ℹ️ Responses APIが利用できないため、Beta APIにフォールバック")
-                vector_store = await self.async_client.beta.vector_stores.retrieve(
+                vector_store = await self.async_client.vector_stores.retrieve(
                     vector_store_id=vector_store_id
                 )
                 
@@ -1630,11 +1630,9 @@ class VectorStoreHandler:
                     print("❌ ベクトルストア作成に失敗しました")
                     return
             
-            client = OpenAI()
-            
             # ファイルをOpenAI Files APIにアップロード
             with open(file_path, "rb") as f:
-                file_obj = client.files.create(
+                file_obj = await self.async_client.files.create(
                     file=f,
                     purpose="assistants"
                 )
@@ -1644,7 +1642,7 @@ class VectorStoreHandler:
             # 各アクティブベクトルストアに追加
             for vs_id in active_ids:
                 try:
-                    client.beta.vector_stores.files.create(
+                    await self.async_client.vector_stores.files.create(
                         vector_store_id=vs_id,
                         file_id=file_obj.id
                     )
