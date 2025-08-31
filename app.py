@@ -215,20 +215,41 @@ async def _initialize_vector_stores(user_id: str, thread: dict):
         if data_layer_instance and hasattr(data_layer_instance, 'get_user_vector_store_id'):
             personal_vs_id = await data_layer_instance.get_user_vector_store_id(user_id)
         
-        # Session層（スレッドから）
-        session_vs_id = thread.get("vector_store_id")
+        # Chat層（チャット専用ベクトルストア）- 新規チャット時に自動作成
+        thread_id = ui.get_session("thread_id")
+        chat_vs_id = thread.get("vector_store_id")
+        
+        # 新規チャットの場合、専用ベクトルストアを作成
+        if not chat_vs_id and thread_id:
+            try:
+                app_logger.info(f"🔧 新規チャット用ベクトルストア作成開始: {thread_id[:8]}...")
+                chat_vs_id = await vector_store_handler.create_session_vector_store_with_auto_delete(thread_id)
+                if chat_vs_id:
+                    app_logger.info(f"✅ チャット専用ベクトルストア作成完了: {chat_vs_id[:8]}...")
+                    # Chainlitスレッドメタデータにも保存（永続化）
+                    try:
+                        await cl.update_thread(
+                            thread_id=thread_id,
+                            metadata={"vector_store_id": chat_vs_id}
+                        )
+                    except Exception as meta_error:
+                        app_logger.warning(f"スレッドメタデータ更新失敗: {meta_error}")
+                else:
+                    app_logger.warning("チャット用ベクトルストア作成に失敗")
+            except Exception as vs_error:
+                app_logger.error(f"チャット用ベクトルストア作成エラー: {vs_error}")
         
         # セッションに保存
         vs_ids = {
             "company": company_vs_id,
             "personal": personal_vs_id,
-            "session": session_vs_id
+            "chat": chat_vs_id  # sessionからchatに名称変更
         }
         
         ui.set_session("vector_store_ids", vs_ids)
         ui.set_session("company_vs_id", company_vs_id)
         ui.set_session("personal_vs_id", personal_vs_id)
-        ui.set_session("session_vs_id", session_vs_id)
+        ui.set_session("chat_vs_id", chat_vs_id)  # sessionからchatに名称変更
         
         app_logger.debug("ベクトルストア初期化", **{k: v[:8] + "..." if v else None for k, v in vs_ids.items()})
         
@@ -238,7 +259,7 @@ async def _initialize_vector_stores(user_id: str, thread: dict):
         ui.set_session("vector_store_ids", {})
         ui.set_session("company_vs_id", None)
         ui.set_session("personal_vs_id", None)
-        ui.set_session("session_vs_id", None)
+        ui.set_session("chat_vs_id", None)
 
 
 async def _create_settings_ui():

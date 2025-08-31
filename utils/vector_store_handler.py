@@ -1331,23 +1331,23 @@ class VectorStoreHandler:
             print(f"❌ 個人用ベクトルストア作成エラー: {e}")
             return None
     
-    async def create_session_vector_store_with_auto_delete(self, session_id: str) -> Optional[str]:
+    async def create_session_vector_store_with_auto_delete(self, thread_id: str) -> Optional[str]:
         """
-        セッション用ベクトルストアを作成（自動削除機能付き）
+        チャット用ベクトルストアを作成（自動削除機能付き）
         
         Args:
-            session_id: セッションID
+            thread_id: ChainlitスレッドID（チャットID）
         
         Returns:
             作成されたベクトルストアID
         """
         try:
-            name = f"Session VS - {session_id[:8]} - {datetime.now().strftime('%H%M')}"
+            name = f"Chat VS - {thread_id[:8]} - {datetime.now().strftime('%H%M')}"
             
             # メタデータに自動削除情報を含める
             metadata = {
-                "session_id": session_id,
-                "type": "session",
+                "thread_id": thread_id,
+                "type": "chat",
                 "created_at": datetime.now().isoformat(),
                 "auto_delete_at": (datetime.now() + timedelta(hours=self.auto_delete_hours)).isoformat(),
                 "temporary": True
@@ -1615,17 +1615,22 @@ class VectorStoreHandler:
                 print("⚠️ アクティブなベクトルストアが設定されていません")
                 print("🔧 セッション用ベクトルストアを自動作成します...")
                 
-                # セッション用ベクトルストアを自動作成
-                session_id = "default_session"  # TODO: セッション管理から取得
-                vs_name = f"セッション_{session_id}_{datetime.now().strftime('%Y%m%d')}"
+                # チャット用ベクトルストアを自動作成
+                try:
+                    import chainlit as cl
+                    thread_id = cl.user_session.get("thread_id", "unknown_thread")
+                except:
+                    thread_id = "default_session"  # フォールバック
+                    
+                vs_name = f"チャット_{thread_id[:8]}_{datetime.now().strftime('%Y%m%d_%H%M')}"
                 
                 vs_id = await self.create_vector_store(vs_name)
                 if vs_id:
                     print(f"✅ セッション用ベクトルストア作成: {vs_id}")
                     active_ids = [vs_id]
                     
-                    # ベクトルストアIDをセッションに保存（将来の使用のため）
-                    self.session_vs_ids[session_id] = vs_id
+                    # ベクトルストアIDをチャット（thread）に保存（将来の使用のため）
+                    self.session_vs_ids[thread_id] = vs_id
                 else:
                     print("❌ ベクトルストア作成に失敗しました")
                     return

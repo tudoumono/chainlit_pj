@@ -1003,7 +1003,18 @@ class SQLiteDataLayer(BaseDataLayer):
                 print(f"   - Vector Store ID: {thread_data['vector_store_id']}")
                 print(f"   - Created At: {thread_data['created_at']}")
                 
-                vector_store_id = thread_data["vector_store_id"] if thread_data["vector_store_id"] else None
+                # ベクトルストアIDの取得（複数箇所から取得を試行）
+                vector_store_id = thread_data["vector_store_id"]
+                
+                # メタデータからも取得を試行（新しい実装対応）
+                if not vector_store_id and thread_data.get("metadata"):
+                    try:
+                        import json
+                        metadata = json.loads(thread_data["metadata"]) if isinstance(thread_data["metadata"], str) else thread_data["metadata"]
+                        vector_store_id = metadata.get("vector_store_id")
+                        print(f"🔍 [DEBUG] メタデータからベクトルストアID取得: {vector_store_id}")
+                    except Exception as meta_error:
+                        print(f"⚠️ [DEBUG] メタデータ解析エラー: {meta_error}")
                 
                 # ベクトルストアが存在する場合、削除を試みる
                 if vector_store_id:
