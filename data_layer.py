@@ -307,12 +307,6 @@ class SQLiteDataLayer(BaseDataLayer):
                 return thread_dict
         return None
     
-    async def delete_thread(self, thread_id: str) -> None:
-        """スレッドを削除"""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
-            await db.commit()
-    
     async def list_threads(
         self,
         pagination: Pagination,

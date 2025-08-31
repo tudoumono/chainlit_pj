@@ -1591,7 +1591,9 @@ class VectorStoreHandler:
             print(f"✅ ファイル保存完了: {final_path}")
             
             # アクティブなベクトルストアに追加
+            print(f"🔧 [DEBUG] _add_file_to_active_vector_stores呼び出し開始")
             await self._add_file_to_active_vector_stores(str(final_path), element.name)
+            print(f"🔧 [DEBUG] _add_file_to_active_vector_stores呼び出し完了")
             
             return str(final_path)
             
@@ -1608,8 +1610,10 @@ class VectorStoreHandler:
             original_name: 元のファイル名
         """
         try:
+            print(f"🔧 [DEBUG] _add_file_to_active_vector_stores開始: {file_path}")
             # 現在アクティブなベクトルストアIDを取得
             active_ids = self.get_active_vector_store_ids()
+            print(f"🔧 [DEBUG] アクティブベクトルストアID数: {len(active_ids)}")
             
             if not active_ids:
                 print("⚠️ アクティブなベクトルストアが設定されていません")
@@ -1633,13 +1637,17 @@ class VectorStoreHandler:
                     
                     # データベースのスレッドテーブルにベクトルストアIDを保存（チャット削除時の自動削除用）
                     try:
-                        # data_layer経由でベクトルストアIDを保存
-                        from data_layer import data_layer_instance
-                        if data_layer_instance:
-                            await data_layer_instance.update_thread_vector_store(thread_id, vs_id)
-                            print(f"✅ スレッドベクトルストアID保存: {thread_id[:8]}...")
-                        else:
-                            print("⚠️ data_layer_instanceが利用できません")
+                        # 直接SQLiteデータベースに更新（循環インポート回避）
+                        import aiosqlite
+                        db_path = ".chainlit/chainlit.db"
+                        async with aiosqlite.connect(db_path) as db:
+                            await db.execute("""
+                                UPDATE threads 
+                                SET vector_store_id = ?, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            """, (vs_id, thread_id))
+                            await db.commit()
+                        print(f"✅ スレッドベクトルストアID保存: {thread_id[:8]}...")
                     except Exception as db_error:
                         print(f"⚠️ スレッドベクトルストアID保存失敗: {db_error}")
                 else:
