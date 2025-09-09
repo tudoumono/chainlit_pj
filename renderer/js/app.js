@@ -1,0 +1,260 @@
+/**
+ * メインアプリケーション制御
+ * Electron統合とChainlit連携
+ */
+
+class ChainlitElectronApp {
+    constructor() {
+        this.chainlitUrl = null;
+        this.isInitialized = false;
+        
+        // UIエレメント
+        this.loadingScreen = document.getElementById('loading-screen');
+        this.mainApp = document.getElementById('main-app');
+        this.chainlitFrame = document.getElementById('chainlit-frame');
+        this.connectionStatus = document.getElementById('connection-status');
+        this.systemStatus = document.getElementById('system-status');
+        this.currentTime = document.getElementById('current-time');
+        
+        // 初期化
+        this.init();
+    }
+    
+    async init() {
+        try {
+            this.updateLoadingMessage('システムチェック中...');
+            
+            // Electronの可用性確認
+            if (typeof window.electronAPI === 'undefined') {
+                throw new Error('Electron APIが利用できません');
+            }
+            
+            // システム情報取得
+            this.updateLoadingMessage('システム情報を取得中...');
+            const systemInfo = await window.electronAPI.getSystemInfo();
+            console.log('System Info:', systemInfo);
+            
+            // Chainlit URLの取得とヘルスチェック
+            this.updateLoadingMessage('Chainlitサーバーへの接続確認中...');
+            this.chainlitUrl = await window.electronAPI.getChainlitUrl();
+            
+            // サーバー起動待ち
+            await this.waitForChainlitServer();
+            
+            // UI初期化
+            this.updateLoadingMessage('UIを初期化中...');
+            this.setupEventListeners();
+            this.setupChainlitFrame();
+            this.startStatusUpdates();
+            
+            // アプリケーション表示
+            this.showMainApp();
+            
+            this.isInitialized = true;
+            console.log('✅ Chainlit Electron App初期化完了');
+            
+        } catch (error) {
+            console.error('❌ アプリケーション初期化エラー:', error);
+            this.showError('アプリケーションの初期化に失敗しました: ' + error.message);
+        }
+    }
+    
+    async waitForChainlitServer(maxRetries = 30, delay = 1000) {
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                const response = await fetch(`${this.chainlitUrl}/health`);
+                if (response.ok) {
+                    this.updateConnectionStatus('🟢 接続済み', 'システム正常稼働中');
+                    return;
+                }
+            } catch (error) {
+                // サーバー起動待ち
+            }
+            
+            this.updateLoadingMessage(`Chainlitサーバー起動待ち... (${i + 1}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        
+        throw new Error('Chainlitサーバーへの接続がタイムアウトしました');
+    }
+    
+    setupEventListeners() {
+        // ウィンドウコントロール
+        const minimizeBtn = document.getElementById('minimize-btn');
+        const maximizeBtn = document.getElementById('maximize-btn');
+        const closeBtn = document.getElementById('close-btn');
+        
+        minimizeBtn?.addEventListener('click', () => {
+            window.electronAPI.app.minimize();
+        });
+        
+        maximizeBtn?.addEventListener('click', () => {
+            window.electronAPI.app.maximize();
+        });
+        
+        closeBtn?.addEventListener('click', () => {
+            if (confirm('アプリケーションを終了しますか？')) {
+                window.electronAPI.app.close();
+            }
+        });
+        
+        // ウィンドウリサイズ処理
+        window.addEventListener('resize', () => {
+            this.handleWindowResize();
+        });
+        
+        // エラーハンドリング
+        window.addEventListener('error', (event) => {
+            console.error('Global error:', event.error);
+            this.showNotification('エラー', event.error.message, 'error');
+        });
+        
+        // 未処理のPromise拒否
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled promise rejection:', event.reason);
+            this.showNotification('エラー', 'システムエラーが発生しました', 'error');
+        });
+    }
+    
+    setupChainlitFrame() {
+        if (!this.chainlitFrame || !this.chainlitUrl) return;
+        
+        // Chainlit URLを設定
+        this.chainlitFrame.src = this.chainlitUrl;
+        
+        // フレーム読み込み完了処理
+        this.chainlitFrame.onload = () => {
+            console.log('✅ Chainlitフレーム読み込み完了');
+            this.updateConnectionStatus('🟢 接続済み', 'Chainlit正常稼働中');
+        };
+        
+        // フレームエラー処理
+        this.chainlitFrame.onerror = (error) => {
+            console.error('❌ Chainlitフレーム読み込みエラー:', error);
+            this.updateConnectionStatus('🔴 エラー', 'Chainlit接続エラー');
+        };
+    }
+    
+    startStatusUpdates() {
+        // 現在時刻の更新
+        const updateTime = () => {
+            if (this.currentTime) {
+                this.currentTime.textContent = new Date().toLocaleString('ja-JP');
+            }
+        };
+        
+        updateTime();
+        setInterval(updateTime, 1000);
+        
+        // システム状態の定期チェック
+        const checkSystemStatus = async () => {
+            try {
+                const healthStatus = await window.electronAPI.system.health();
+                if (healthStatus && healthStatus.status === 'healthy') {
+                    this.updateConnectionStatus('🟢 接続済み', 'システム正常稼働中');
+                } else {
+                    this.updateConnectionStatus('🟡 警告', 'システム状態を確認してください');
+                }
+            } catch (error) {
+                this.updateConnectionStatus('🔴 エラー', 'システム接続エラー');
+            }
+        };
+        
+        // 30秒間隔でヘルスチェック
+        setInterval(checkSystemStatus, 30000);
+    }
+    
+    showMainApp() {
+        if (this.loadingScreen) {
+            this.loadingScreen.style.display = 'none';
+        }
+        if (this.mainApp) {
+            this.mainApp.classList.remove('hidden');
+        }
+    }
+    
+    updateLoadingMessage(message) {
+        const loadingMessage = document.getElementById('loading-message');
+        if (loadingMessage) {
+            loadingMessage.textContent = message;
+        }
+        console.log('🔄', message);
+    }
+    
+    updateConnectionStatus(status, message) {
+        if (this.connectionStatus) {
+            this.connectionStatus.textContent = status;
+        }
+        if (this.systemStatus) {
+            this.systemStatus.textContent = message;
+        }
+    }
+    
+    showError(message) {
+        const errorHtml = `
+            <div style="text-align: center; padding: 2rem; color: #dc3545;">
+                <h3>⚠️ エラーが発生しました</h3>
+                <p>${message}</p>
+                <button onclick="location.reload()" class="btn btn-primary" style="margin-top: 1rem;">
+                    再試行
+                </button>
+            </div>
+        `;
+        
+        if (this.loadingScreen) {
+            this.loadingScreen.innerHTML = errorHtml;
+        } else {
+            document.body.innerHTML = errorHtml;
+        }
+    }
+    
+    showNotification(title, message, type = 'info') {
+        // 通知システムを使用（notifications.js）
+        if (window.NotificationManager) {
+            window.NotificationManager.show(title, message, type);
+        } else {
+            console.log(`${type.toUpperCase()}: ${title} - ${message}`);
+        }
+    }
+    
+    handleWindowResize() {
+        // ウィンドウリサイズ時の処理
+        const { innerWidth, innerHeight } = window;
+        
+        // モバイル表示モードの切り替え
+        const isMobile = innerWidth < 768;
+        document.body.classList.toggle('mobile-mode', isMobile);
+        
+        // タブ表示の調整
+        if (window.TabManager) {
+            window.TabManager.handleResize(innerWidth, innerHeight);
+        }
+    }
+    
+    // パブリックメソッド
+    getChainlitUrl() {
+        return this.chainlitUrl;
+    }
+    
+    isAppReady() {
+        return this.isInitialized;
+    }
+    
+    async refreshChainlitFrame() {
+        if (this.chainlitFrame && this.chainlitUrl) {
+            this.chainlitFrame.src = this.chainlitUrl;
+            this.updateConnectionStatus('🔄 再接続中...', 'Chainlitを再読み込み中');
+        }
+    }
+}
+
+// アプリケーション初期化
+let app;
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🚀 Chainlit Electron App starting...');
+    app = new ChainlitElectronApp();
+});
+
+// グローバルアクセス用
+window.ChainlitApp = app;

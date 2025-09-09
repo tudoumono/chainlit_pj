@@ -3,7 +3,9 @@
 > **プロジェクト**: Chainlit多機能AIワークスペースアプリケーション  
 > **目的**: ElectronでのPythonアプリケーションExe化の実現方法  
 > **作成日**: 2025-01-28  
-> **参照データ**: Context7 Electron Documentation, electron-builder, Python統合パターン
+> **更新日**: 2025-08-31  
+> **参照データ**: Context7 Electron Documentation, electron-builder, Chainlit Hybrid Integration Pattern  
+> **実装方針**: 既存Chainlit機能保持 + Electron管理機能追加
 
 ## 1. プロジェクト現状分析
 
@@ -45,132 +47,268 @@ commands = {
 
 ## 2. Electron + Python統合アーキテクチャ
 
-### 2.1 推奨アーキテクチャ: Subprocess + IPC Pattern
+### 2.0 起動方式の決定（ADR-0001要約）
+
+- 採用方式: Option B（Electron Main が埋め込みPythonを直接 spawn し、Chainlit(8000) と Electron API(8001) を個別起動・監視）
+- 開発時: `uv run` により Python を実行
+- 配布時: `resources/python_dist/` の埋め込みPythonで `-m chainlit` 及び `electron_api.py` を実行
+- IPC: `start-chainlit` / `start-electron-api` / `stop-*` を `ipcMain.handle` で提供
+- Renderer: 初期化時に `start-*` を呼び、ヘルスチェック通過後に UI 表示
+
+選択肢A（`integrated_run.py` による統合起動）を選ばない理由:
+- 起動/終了/リトライ/ログ/環境変数が Python 側と Electron 側に分散し、責務境界が不明瞭になる
+- 配布時に外部実行環境（`uv` 等）への依存が残りやすい
+- 非エンジニア向け配布で求める一体管理（Electron主導）と方針が合致しない
+
+### 2.1 推奨アーキテクチャ: Hybrid Web + Native GUI Pattern
 
 ```
 ┌─────────────────────────────────────┐
 │         Electron App                │
 ├─────────────────────────────────────┤
 │  Main Process                       │
-│  ├── Python Backend Manager        │
-│  ├── IPC Communication Handler     │
-│  └── Resource Management           │
+│  ├── Chainlit Server Manager       │
+│  ├── Native GUI Windows            │
+│  └── IPC Communication Handler     │
 ├─────────────────────────────────────┤
-│  Renderer Process(es)               │
-│  ├── React/Vue Frontend             │
-│  ├── GUI Components                │
-│  └── IPC Client                    │
+│  Renderer Process: Chat Tab        │
+│  ├── Embedded Chainlit WebView     │
+│  └── URL: http://localhost:8000    │
+├─────────────────────────────────────┤
+│  Renderer Process: Management Tabs │
+│  ├── Vector Store Manager          │
+│  ├── Persona Manager               │
+│  ├── Analytics Dashboard           │
+│  └── Settings Panel                │
 └─────────────────────────────────────┘
                     │
                     │ child_process.spawn
                     ▼
 ┌─────────────────────────────────────┐
-│      Python Backend                │
+│    Python Chainlit Backend         │
 ├─────────────────────────────────────┤
-│  Standalone Python Application     │
-│  ├── API Layer (JSON over stdio)   │
-│  ├── handlers/ (既存コード活用)     │
-│  ├── utils/ (共通機能)             │
-│  └── Database/File Operations      │
+│  Chainlit Server (port 8000)       │
+│  ├── Chat & History Management     │
+│  ├── OpenAI API Integration        │
+│  ├── SQLite Database (.chainlit/)  │
+│  └── handlers/ (既存コード活用)     │
 └─────────────────────────────────────┘
 ```
 
-### 2.2 参照: Electronドキュメントからの実装パターン
+### 2.2 機能分離の詳細
+
+#### 🟢 Chainlit側（チャット・履歴・API管理）
+```
+✅ リアルタイムチャット機能
+├─ AIとの対話
+├─ チャット履歴表示・管理
+├─ チャット履歴削除（ベクトルストア連動削除含む）
+├─ ファイルアップロード（チャット内）
+├─ メッセージエクスポート機能
+└─ セッション管理
+
+✅ OpenAI API設定・管理
+├─ モデル設定（GPT-4、GPT-3.5など）
+├─ ベクトルストア機能有効/無効
+├─ ツール設定（Web検索、ファイル検索）
+├─ APIキー管理
+├─ API使用量監視
+└─ レスポンス設定
+
+✅ コマンド実行（チャット内）
+├─ /help, /clear, /new
+├─ /model, /system（チャット設定）
+├─ /settings（API設定）
+├─ 基本的な /persona, /vs コマンド
+└─ /search（チャット内検索）
+
+✅ SQLite Database管理
+├─ threads（スレッド情報）
+├─ steps（メッセージ内容・会話履歴）
+├─ personas（ペルソナ情報）
+├─ user_vector_stores（ユーザー別ベクトルストア）
+└─ feedbacks（フィードバック情報）
+```
+
+#### 🟦 Electron側（データ管理・分析・UI拡張）
+```
+✅ データ管理画面
+├─ ベクトルストア管理（CRUD、ファイル管理、統計）
+├─ ペルソナ管理（作成・編集・インポート/エクスポート）
+├─ アプリ設定（UI、言語、通知設定など）
+└─ ユーザー管理
+
+✅ 分析・監視機能  
+├─ 使用統計・分析ダッシュボード
+├─ システム状態監視
+├─ パフォーマンス分析
+└─ 使用履歴レポート（SQLiteから取得）
+
+✅ ファイル・データ操作
+├─ 一括データエクスポート・インポート
+├─ ファイルドラッグ&ドロップ
+├─ バックアップ・復元
+└─ ログ管理
+
+✅ 拡張機能
+├─ 通知機能
+├─ システムトレイ
+├─ ショートカットキー
+└─ アプリ更新
+```
+
+#### 🔄 データ連携方法
+- **SQLite共有**: 両者が同じ `.chainlit/chainlit.db` にアクセス
+- **Electron → Python**: REST API経由または直接SQLite操作
+- **履歴削除連動**: Chainlit削除時にベクトルストア自動削除
+- **設定同期**: リアルタイム同期またはファイル監視
+- **リアルタイム監視**: WebSocket/EventEmitterによる状態共有
+
+### 2.3 参照: Electronドキュメントからの実装パターン
 
 **Context7からの引用:**
-- **spawn方式**: `const child = proc.spawn(electron)` (README.md#_snippet_2)
-- **IPC通信**: `child.postMessage()`, `process.parentPort.on('message')` (utility-process.md)
-- **UtilityProcess**: Node.js統合可能な子プロセス管理 (utility-process.md#_snippet_0)
+- **spawn方式**: `const child = proc.spawn(python, [script])` (README.md#_snippet_2)
+- **WebView統合**: Embedded web content via BrowserWindow (webview-tag.md)
+- **IPC通信**: `ipcMain.handle()`, `ipcRenderer.invoke()` (ipc-main.md, ipc-renderer.md)
+- **App packaging**: extraResources for bundling Python environment (electron-builder.md)
 
 ## 3. 詳細実装手順
 
-### 3.1 Phase 1: Python Backend API化
+### 3.0 起動フロー（Option B）
 
-#### 3.1.1 Chainlit除去とAPI化
+1) Electron Main: `start-chainlit` 実行
+- dev: `uv run chainlit run app.py --host 127.0.0.1 --port 8000`
+- packaged: `PY_EMBED -m chainlit run app.py --host 127.0.0.1 --port 8000`
+
+2) Electron Main: `start-electron-api` 実行
+- dev: `uv run python electron_api.py`
+- packaged: `PY_EMBED electron_api.py`
+
+3) Renderer: `waitForServers()` / `waitForChainlitServer()` で 200 応答を確認し UI 表示
+
+4) 終了時: `before-quit` で子プロセスに `SIGTERM` を送信
+
+必要な環境変数（packaged想定）:
+- `PYTHONHOME`, `PYTHONPATH`, `PATH`（`path.delimiter` を使用）
+- `CHAINLIT_CONFIG_PATH` → `<resources>/.chainlit/config.toml`
+- `EXE_DIR`, `CHAT_LOG_DIR`, `CONSOLE_LOG_DIR` → `app.getPath('userData')` 等
+
+### 3.1 Phase 1: Chainlit統合準備
+
+#### 3.1.1 Chainlit保持 + Electron管理機能追加
 ```python
-# 新ファイル: python_backend/api_server.py
-import json
-import sys
+# 既存のapp.pyはそのまま保持
+# Electron用のREST APIエンドポイント追加
+
+# 新ファイル: electron_api.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 import asyncio
 from typing import Dict, Any
 
 # 既存ハンドラーをインポート
-from handlers.command_handler import CommandHandler
-from handlers.persona_handler import PersonaHandler
-from handlers.settings_handler import SettingsHandler
+from handlers.persona_handler import persona_handler_instance
+from handlers.analytics_handler import analytics_handler_instance
+from utils.vector_store_handler import vector_store_handler
+from data_layer import SQLiteDataLayer
 
-class PythonBackendAPI:
-    def __init__(self):
-        self.command_handler = CommandHandler()
-        self.persona_handler = PersonaHandler()
-        self.settings_handler = SettingsHandler()
+app = FastAPI(title="Chainlit Electron API")
+
+# CORS設定（Electronからのアクセス許可）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Electron renderer
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# SQLiteデータレイヤーインスタンス
+data_layer = SQLiteDataLayer()
+
+class ElectronAPI:
+    """Electron用のRESTful API"""
     
-    async def process_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """APIリクエスト処理"""
+    @app.get("/api/personas")
+    async def list_personas():
+        """ペルソナ一覧取得"""
         try:
-            command = request.get("command")
-            params = request.get("params", {})
-            
-            if command.startswith("/persona"):
-                result = await self.persona_handler.handle_request(params)
-            elif command.startswith("/vs"):
-                result = await self.vector_store_handler.handle_request(params)
-            elif command.startswith("/settings"):
-                result = await self.settings_handler.handle_request(params)
-            else:
-                result = {"error": f"Unknown command: {command}"}
-            
-            return {"status": "success", "data": result}
+            personas = await data_layer.get_all_personas()
+            return {"status": "success", "data": personas}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    
+    @app.post("/api/personas")
+    async def create_persona(persona_data: Dict[str, Any]):
+        """ペルソナ作成"""
+        try:
+            persona_id = await data_layer.create_persona(persona_data)
+            return {"status": "success", "data": {"persona_id": persona_id}}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    
+    @app.get("/api/analytics/dashboard/{user_id}")
+    async def get_analytics_dashboard(user_id: str):
+        """分析ダッシュボードデータ取得"""
+        try:
+            dashboard_data = await analytics_handler_instance.get_dashboard_data(user_id)
+            return {"status": "success", "data": dashboard_data}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    
+    @app.get("/api/vectorstores")
+    async def list_vector_stores():
+        """ベクトルストア一覧取得"""
+        try:
+            vector_stores = await vector_store_handler.list_vector_stores()
+            return {"status": "success", "data": vector_stores}
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def run(self):
-        """メインループ: stdin/stdoutでJSON通信"""
-        asyncio.run(self._main_loop())
-    
-    async def _main_loop(self):
-        while True:
-            try:
-                # stdinから読み取り
-                line = sys.stdin.readline()
-                if not line:
-                    break
-                
-                request = json.loads(line.strip())
-                response = await self.process_request(request)
-                
-                # stdoutに応答
-                print(json.dumps(response, ensure_ascii=False), flush=True)
-            except Exception as e:
-                error_response = {"status": "error", "error": str(e)}
-                print(json.dumps(error_response), flush=True)
+def run_electron_api():
+    """Electron用APIサーバーを起動"""
+    uvicorn.run(app, host="127.0.0.1", port=8001, log_level="info")
 
 if __name__ == "__main__":
-    api = PythonBackendAPI()
-    api.run()
+    run_electron_api()
 ```
 
-#### 3.1.2 ハンドラー適応
+#### 3.1.2 統合起動スクリプト
 ```python
-# handlers/persona_handler.py の適応例
-class PersonaHandler:
-    async def handle_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Electron APIリクエスト対応"""
-        action = params.get("action")
-        
-        if action == "list_personas":
-            personas = await self.list_personas()
-            return {"personas": personas}
-        elif action == "create_persona":
-            persona_data = params.get("persona_data")
-            result = await self.create_persona(persona_data)
-            return {"persona_id": result}
-        elif action == "get_persona":
-            persona_id = params.get("persona_id")
-            persona = await self.get_persona(persona_id)
-            return {"persona": persona}
-        
-        return {"error": "Unknown action"}
+# 新ファイル: integrated_run.py
+import asyncio
+import subprocess
+import threading
+import time
+from pathlib import Path
+
+def start_chainlit_server():
+    """Chainlitサーバーを起動"""
+    subprocess.run(['python', 'run.py'], cwd=Path(__file__).parent)
+
+def start_electron_api():
+    """Electron用APIサーバーを起動"""
+    from electron_api import run_electron_api
+    run_electron_api()
+
+def main():
+    """統合起動: Chainlit + Electron API"""
+    print("🚀 統合サーバー起動中...")
+    
+    # Chainlitサーバーをバックグラウンドで起動
+    chainlit_thread = threading.Thread(target=start_chainlit_server, daemon=True)
+    chainlit_thread.start()
+    
+    # 少し待ってからElectron APIを起動
+    time.sleep(3)
+    
+    # Electron APIを起動（メインスレッド）
+    print("📡 Electron API起動中... (port 8001)")
+    start_electron_api()
+
+if __name__ == "__main__":
+    main()
 ```
 
 ### 3.2 Phase 2: Electron Frontend開発
@@ -181,115 +319,155 @@ class PersonaHandler:
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
+const axios = require('axios');
 
-class PythonBackendManager {
+class ChainlitIntegratedManager {
     constructor() {
         this.pythonProcess = null;
-        this.requestQueue = new Map();
-        this.requestId = 0;
+        this.chainlitUrl = 'http://localhost:8000';
+        this.electronApiUrl = 'http://localhost:8001';
     }
     
-    start() {
-        // 参照: Context7 subprocess pattern
-        const pythonExecutable = path.join(__dirname, 'resources', 'python-backend', 'api_server.exe');
+    async start() {
+        // 統合Pythonプロセスを起動（Chainlit + Electron API）
+        const pythonScript = app.isPackaged 
+            ? path.join(process.resourcesPath, 'python-backend', 'integrated_run.py')
+            : path.join(__dirname, '..', 'integrated_run.py');
         
-        this.pythonProcess = spawn(pythonExecutable, [], {
-            stdio: ['pipe', 'pipe', 'pipe']
+        this.pythonProcess = spawn('python', [pythonScript], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            cwd: app.isPackaged 
+                ? path.join(process.resourcesPath, 'python-backend')
+                : path.join(__dirname, '..')
         });
         
-        // レスポンス処理
+        // サーバー起動ログ
         this.pythonProcess.stdout.on('data', (data) => {
-            const responses = data.toString().split('\n').filter(line => line.trim());
-            responses.forEach(responseStr => {
-                try {
-                    const response = JSON.parse(responseStr);
-                    this.handleResponse(response);
-                } catch (e) {
-                    console.error('Python response parse error:', e);
-                }
-            });
+            console.log('Python Server:', data.toString());
         });
         
-        // エラー処理
         this.pythonProcess.stderr.on('data', (data) => {
-            console.error('Python Backend Error:', data.toString());
+            console.error('Python Error:', data.toString());
         });
+        
+        // サーバー起動を待つ
+        await this.waitForServers();
     }
     
-    async sendRequest(command, params = {}) {
-        return new Promise((resolve, reject) => {
-            const requestId = ++this.requestId;
-            const request = {
-                id: requestId,
-                command,
-                params
+    async waitForServers() {
+        """ChainlitとElectron APIサーバーの起動を待つ"""
+        const maxAttempts = 30;
+        let chainlitReady = false;
+        let electronApiReady = false;
+        
+        for (let i = 0; i < maxAttempts; i++) {
+            try {
+                if (!chainlitReady) {
+                    await axios.get(this.chainlitUrl);
+                    chainlitReady = true;
+                    console.log('✅ Chainlit server ready');
+                }
+                
+                if (!electronApiReady) {
+                    await axios.get(`${this.electronApiUrl}/api/health`);
+                    electronApiReady = true;
+                    console.log('✅ Electron API server ready');
+                }
+                
+                if (chainlitReady && electronApiReady) {
+                    break;
+                }
+            } catch (error) {
+                // サーバーがまだ起動していない
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        if (!chainlitReady || !electronApiReady) {
+            throw new Error('Failed to start Python servers');
+        }
+    }
+    
+    async callElectronAPI(endpoint, method = 'GET', data = null) {
+        """Electron API呼び出し"""
+        try {
+            const config = {
+                method,
+                url: `${this.electronApiUrl}${endpoint}`,
+                headers: { 'Content-Type': 'application/json' }
             };
             
-            this.requestQueue.set(requestId, { resolve, reject });
-            
-            // Python backendにリクエスト送信
-            this.pythonProcess.stdin.write(
-                JSON.stringify(request) + '\n'
-            );
-            
-            // タイムアウト設定
-            setTimeout(() => {
-                if (this.requestQueue.has(requestId)) {
-                    this.requestQueue.delete(requestId);
-                    reject(new Error('Request timeout'));
-                }
-            }, 30000);
-        });
-    }
-    
-    handleResponse(response) {
-        const requestId = response.id;
-        const pendingRequest = this.requestQueue.get(requestId);
-        
-        if (pendingRequest) {
-            this.requestQueue.delete(requestId);
-            if (response.status === 'success') {
-                pendingRequest.resolve(response.data);
-            } else {
-                pendingRequest.reject(new Error(response.error));
+            if (data) {
+                config.data = data;
             }
+            
+            const response = await axios(config);
+            return response.data;
+        } catch (error) {
+            throw new Error(`API Error: ${error.message}`);
         }
     }
 }
 
 // グローバルインスタンス
-const pythonBackend = new PythonBackendManager();
+const chainlitManager = new ChainlitIntegratedManager();
 
 // アプリケーション初期化
-app.whenReady().then(() => {
-    pythonBackend.start();
-    
-    const mainWindow = new BrowserWindow({
-        width: 1200,
-        height: 800,
-        webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-            preload: path.join(__dirname, 'preload.js')
+app.whenReady().then(async () => {
+    try {
+        await chainlitManager.start();
+        
+        // メインウィンドウ作成（タブ付きUI）
+        const mainWindow = new BrowserWindow({
+            width: 1400,
+            height: 900,
+            webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                preload: path.join(__dirname, 'preload.js')
+            }
+        });
+        
+        // タブ付きレンダラーページをロード
+        mainWindow.loadFile('renderer/index.html');
+        
+        // 開発時はDevToolsを開く
+        if (!app.isPackaged) {
+            mainWindow.webContents.openDevTools();
         }
-    });
-    
-    mainWindow.loadFile('renderer/index.html');
+        
+    } catch (error) {
+        console.error('Failed to start application:', error);
+        app.quit();
+    }
 });
 
-// IPC handlers
-ipcMain.handle('python-api', async (event, command, params) => {
+// IPC handlers for Electron API
+ipcMain.handle('electron-api', async (event, endpoint, method, data) => {
     try {
-        const result = await pythonBackend.sendRequest(command, params);
+        const result = await chainlitManager.callElectronAPI(endpoint, method, data);
         return { success: true, data: result };
     } catch (error) {
         return { success: false, error: error.message };
     }
 });
 
+// Chainlit URL取得
+ipcMain.handle('get-chainlit-url', () => {
+    return chainlitManager.chainlitUrl;
+});
+
+// アプリ終了時の処理
 app.on('before-quit', () => {
-    if (pythonBackend.pythonProcess) {
-        pythonBackend.pythonProcess.kill();
+    if (chainlitManager.pythonProcess) {
+        chainlitManager.pythonProcess.kill('SIGTERM');
+    }
+});
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+        app.quit();
     }
 });
 ```
@@ -299,55 +477,247 @@ app.on('before-quit', () => {
 // electron/preload.js
 const { contextBridge, ipcRenderer } = require('electron');
 
-// 参照: Context7 contextBridge pattern
+// セキュアなAPI公開
 contextBridge.exposeInMainWorld('electronAPI', {
-    // Python Backend API
-    callPythonAPI: (command, params) => 
-        ipcRenderer.invoke('python-api', command, params),
+    // Chainlit URL取得
+    getChainlitUrl: () => ipcRenderer.invoke('get-chainlit-url'),
+    
+    // Electron Backend API (REST)
+    callAPI: (endpoint, method = 'GET', data = null) => 
+        ipcRenderer.invoke('electron-api', endpoint, method, data),
     
     // ペルソナ管理API
     personas: {
-        list: () => ipcRenderer.invoke('python-api', '/persona list'),
+        list: () => ipcRenderer.invoke('electron-api', '/api/personas', 'GET'),
         create: (personaData) => 
-            ipcRenderer.invoke('python-api', '/persona create', { persona_data: personaData }),
+            ipcRenderer.invoke('electron-api', '/api/personas', 'POST', personaData),
         get: (personaId) => 
-            ipcRenderer.invoke('python-api', '/persona get', { persona_id: personaId }),
+            ipcRenderer.invoke('electron-api', `/api/personas/${personaId}`, 'GET'),
         update: (personaId, personaData) =>
-            ipcRenderer.invoke('python-api', '/persona update', { persona_id: personaId, persona_data: personaData }),
+            ipcRenderer.invoke('electron-api', `/api/personas/${personaId}`, 'PUT', personaData),
         delete: (personaId) =>
-            ipcRenderer.invoke('python-api', '/persona delete', { persona_id: personaId })
+            ipcRenderer.invoke('electron-api', `/api/personas/${personaId}`, 'DELETE')
     },
     
     // ベクトルストア管理API
     vectorStore: {
-        list: () => ipcRenderer.invoke('python-api', '/vs list'),
-        create: (name, category) => 
-            ipcRenderer.invoke('python-api', '/vs create', { name, category }),
-        upload: (vectorStoreId, filePath) =>
-            ipcRenderer.invoke('python-api', '/vs upload', { vector_store_id: vectorStoreId, file_path: filePath }),
-        search: (query, vectorStoreIds) =>
-            ipcRenderer.invoke('python-api', '/vs search', { query, vector_store_ids: vectorStoreIds })
-    },
-    
-    // 設定管理API
-    settings: {
-        get: () => ipcRenderer.invoke('python-api', '/settings get'),
-        update: (settings) => 
-            ipcRenderer.invoke('python-api', '/settings update', { settings }),
-        test: () => ipcRenderer.invoke('python-api', '/settings test')
+        list: () => ipcRenderer.invoke('electron-api', '/api/vectorstores', 'GET'),
+        create: (data) => 
+            ipcRenderer.invoke('electron-api', '/api/vectorstores', 'POST', data),
+        get: (vectorStoreId) => 
+            ipcRenderer.invoke('electron-api', `/api/vectorstores/${vectorStoreId}`, 'GET'),
+        upload: (vectorStoreId, fileData) =>
+            ipcRenderer.invoke('electron-api', `/api/vectorstores/${vectorStoreId}/upload`, 'POST', fileData),
+        delete: (vectorStoreId) =>
+            ipcRenderer.invoke('electron-api', `/api/vectorstores/${vectorStoreId}`, 'DELETE')
     },
     
     // 分析・統計API
     analytics: {
         dashboard: (userId) => 
-            ipcRenderer.invoke('python-api', '/analytics dashboard', { user_id: userId }),
+            ipcRenderer.invoke('electron-api', `/api/analytics/dashboard/${userId}`, 'GET'),
         usage: (userId, period) =>
-            ipcRenderer.invoke('python-api', '/analytics usage', { user_id: userId, period })
+            ipcRenderer.invoke('electron-api', `/api/analytics/usage/${userId}?period=${period}`, 'GET'),
+        export: (userId, format) =>
+            ipcRenderer.invoke('electron-api', `/api/analytics/export/${userId}?format=${format}`, 'GET')
+    },
+    
+    // システム情報API
+    system: {
+        status: () => ipcRenderer.invoke('electron-api', '/api/system/status', 'GET'),
+        logs: () => ipcRenderer.invoke('electron-api', '/api/system/logs', 'GET'),
+        health: () => ipcRenderer.invoke('electron-api', '/api/system/health', 'GET')
+    },
+    
+    // ファイル操作API
+    files: {
+        export: (data, filename) => 
+            ipcRenderer.invoke('electron-api', '/api/files/export', 'POST', { data, filename }),
+        import: (filepath) =>
+            ipcRenderer.invoke('electron-api', '/api/files/import', 'POST', { filepath })
     }
 });
 ```
 
-#### 3.2.3 Frontend UI実装（React例）
+#### 3.2.3 タブベースUI実装
+```html
+<!-- renderer/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Chainlit AI Workspace</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica', sans-serif;
+            margin: 0; 
+            padding: 0; 
+            background: #f5f5f5;
+        }
+        .tab-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .tab-header {
+            display: flex;
+            background: #fff;
+            border-bottom: 1px solid #ddd;
+            padding: 0;
+        }
+        .tab-button {
+            padding: 12px 24px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            font-weight: 500;
+        }
+        .tab-button.active {
+            border-bottom-color: #007acc;
+            background: #f8f9fa;
+        }
+        .tab-content {
+            flex: 1;
+            overflow: hidden;
+        }
+        .tab-pane {
+            display: none;
+            height: 100%;
+        }
+        .tab-pane.active {
+            display: block;
+        }
+        .chainlit-frame {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .management-panel {
+            padding: 20px;
+            height: calc(100% - 40px);
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="tab-container">
+        <div class="tab-header">
+            <button class="tab-button active" onclick="showTab('chat')">💬 チャット</button>
+            <button class="tab-button" onclick="showTab('personas')">👤 ペルソナ管理</button>
+            <button class="tab-button" onclick="showTab('vectorstores')">📚 ベクトルストア</button>
+            <button class="tab-button" onclick="showTab('analytics')">📊 分析</button>
+            <button class="tab-button" onclick="showTab('settings')">⚙️ 設定</button>
+        </div>
+        
+        <div class="tab-content">
+            <div id="chat" class="tab-pane active">
+                <iframe id="chainlit-frame" class="chainlit-frame" src=""></iframe>
+            </div>
+            
+            <div id="personas" class="tab-pane">
+                <div class="management-panel">
+                    <div id="persona-manager">ペルソナ管理画面を読み込み中...</div>
+                </div>
+            </div>
+            
+            <div id="vectorstores" class="tab-pane">
+                <div class="management-panel">
+                    <div id="vectorstore-manager">ベクトルストア管理画面を読み込み中...</div>
+                </div>
+            </div>
+            
+            <div id="analytics" class="tab-pane">
+                <div class="management-panel">
+                    <div id="analytics-dashboard">分析ダッシュボードを読み込み中...</div>
+                </div>
+            </div>
+            
+            <div id="settings" class="tab-pane">
+                <div class="management-panel">
+                    <div id="settings-panel">設定画面を読み込み中...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="./js/app.js"></script>
+</body>
+</html>
+```
+
+```javascript
+// renderer/js/app.js
+let currentTab = 'chat';
+let chainlitUrl = null;
+
+// アプリケーション初期化
+window.addEventListener('DOMContentLoaded', async () => {
+    try {
+        // Chainlit URLを取得
+        chainlitUrl = await window.electronAPI.getChainlitUrl();
+        document.getElementById('chainlit-frame').src = chainlitUrl;
+        
+        console.log('✅ Chainlit connected:', chainlitUrl);
+        
+        // 各管理画面を初期化
+        await initializeManagementPanels();
+        
+    } catch (error) {
+        console.error('❌ 初期化エラー:', error);
+    }
+});
+
+// タブ切り替え
+function showTab(tabId) {
+    // 全てのタブを非アクティブに
+    document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelectorAll('.tab-pane').forEach(pane => {
+        pane.classList.remove('active');
+    });
+    
+    // 指定されたタブをアクティブに
+    event.target.classList.add('active');
+    document.getElementById(tabId).classList.add('active');
+    currentTab = tabId;
+    
+    // タブ切り替え時の追加処理
+    handleTabSwitch(tabId);
+}
+
+// タブ切り替え時の処理
+function handleTabSwitch(tabId) {
+    switch(tabId) {
+        case 'personas':
+            loadPersonaManager();
+            break;
+        case 'vectorstores':
+            loadVectorStoreManager();
+            break;
+        case 'analytics':
+            loadAnalyticsDashboard();
+            break;
+        case 'settings':
+            loadSettingsPanel();
+            break;
+    }
+}
+
+// 管理画面初期化
+async function initializeManagementPanels() {
+    // システム状態チェック
+    try {
+        const systemStatus = await window.electronAPI.system.health();
+        console.log('🟢 システム状態:', systemStatus.data);
+    } catch (error) {
+        console.error('🔴 システム状態チェック失敗:', error);
+    }
+}
+```
+
+#### 3.2.4 管理画面実装（React例）
 ```jsx
 // renderer/src/components/PersonaManager.jsx
 import React, { useState, useEffect } from 'react';
@@ -445,18 +815,24 @@ export default PersonaManager;
 
 ### 3.3 Phase 3: パッケージング&配布
 
-#### 3.3.1 Python実行ファイル化
+#### 3.3.1 Python環境パッケージング
 ```bash
-# PyInstallerでの実行ファイル化
-pip install pyinstaller
+# electron-builderによる統合パッケージング
+# Python実行環境とライブラリを同梱
 
-# スタンドアロンPython backend作成
-pyinstaller --onefile \
-  --hidden-import=handlers \
-  --hidden-import=utils \
-  --add-data="data/:data/" \
-  --distpath=electron/resources/python-backend \
-  python_backend/api_server.py
+# requirements.txtから依存関係解決
+pip install -r requirements.txt
+
+# 必要なPythonファイルとライブラリを準備
+mkdir -p electron/resources/python-backend
+cp -r *.py handlers/ utils/ .chainlit/ electron/resources/python-backend/
+cp requirements.txt electron/resources/python-backend/
+
+# Python実行環境も同梱（オプション）
+# ポータブルPython環境を作成する場合
+python -m venv electron/resources/python-env
+source electron/resources/python-env/bin/activate  # Windows: electron/resources/python-env/Scripts/activate
+pip install -r requirements.txt
 ```
 
 #### 3.3.2 electron-builder設定
@@ -487,13 +863,13 @@ pyinstaller --onefile \
     ],
     "extraResources": [
       {
-        "from": "electron/resources/python-backend/",
+        "from": "./",
         "to": "python-backend/",
-        "filter": ["**/*"]
+        "filter": ["*.py", "handlers/**/*", "utils/**/*", ".chainlit/**/*", "requirements.txt"]
       },
       {
-        "from": "data/",
-        "to": "data/",
+        "from": "electron/resources/python-env/",
+        "to": "python-env/",
         "filter": ["**/*"]
       }
     ],
@@ -642,12 +1018,18 @@ jobs:
 
 ## 4. 移行戦略とベストプラクティス
 
-### 4.1 段階的移行アプローチ
+### 4.1 段階的実装アプローチ
 
-1. **Phase 1**: 既存のChainlitアプリは維持
-2. **Phase 2**: ElectronのGUI管理機能から開始
-3. **Phase 3**: 機能充実後にChainlit部分の移行検討
-4. **Phase 4**: 完全統合またはハイブリッド運用
+1. **Phase 1**: 既存Chainlitアプリ維持 + Electron管理機能追加
+2. **Phase 2**: タブ統合UI開発 + データ連携強化
+3. **Phase 3**: 高度な分析機能・拡張機能追加
+4. **Phase 4**: 配布・運用最適化 + 自動更新対応
+
+**ハイブリッド運用の利点:**
+- 既存Chainlit機能の完全保持
+- Electronネイティブ機能による拡張
+- SQLiteデータベース共有による効率的連携
+- 段階的移行による開発リスク軽減
 
 ### 4.2 セキュリティ考慮事項
 
@@ -658,10 +1040,12 @@ jobs:
 
 ### 4.3 パフォーマンス最適化
 
-- **遅延ロード**: 大きなPythonモジュールの遅延インポート
+- **サーバー起動最適化**: Chainlit + Electron API並列起動
 - **プロセス管理**: Python processの適切な終了処理
 - **メモリ管理**: 長時間実行時のメモリリーク対策
-- **キャッシュ戦略**: API レスポンスキャッシュ
+- **キャッシュ戦略**: SQLiteクエリ結果キャッシュ
+- **WebView最適化**: Chainlit埋め込み表示の軽量化
+- **REST API最適化**: FastAPIによる非同期処理活用
 
 ### 4.4 開発・デバッグ環境
 
@@ -682,38 +1066,43 @@ if (!app.isPackaged) {
 
 ### 5.1 Context7からの主要参照
 
-- **Electron subprocess patterns**: README.md#_snippet_2, utility-process.md
-- **IPC Communication**: ipc.md, process-model.md
-- **Application packaging**: application-distribution.md, electron-builder usage
-- **Security guidelines**: security.md, sandbox.md
+- **Electron subprocess patterns**: README.md#_snippet_2, child_process.spawn usage
+- **WebView Integration**: webview-tag.md, BrowserWindow embedding
+- **IPC Communication**: ipc-main.md, ipc-renderer.md, contextBridge.md
+- **Application packaging**: application-distribution.md, electron-builder extraResources
+- **Security guidelines**: security.md, sandbox.md, contextIsolation
 
-### 5.2 追加リソース
+### 5.2 技術スタック
 
-- **electron-builder**: 完全パッケージング・配布ソリューション
-- **PyInstaller**: Python実行ファイル化
-- **React/Vue**: Modern frontend framework options
-- **Auto-updater**: electron-updater での自動更新
+- **Electron**: クロスプラットフォームデスクトップアプリ開発
+- **Chainlit**: 既存の多機能AIワークスペース（Python）
+- **FastAPI**: Electron用REST APIバックエンド
+- **SQLite**: 統合データベース（.chainlit/chainlit.db）
+- **electron-builder**: パッケージング・配布ソリューション
+- **HTML/CSS/JavaScript**: フロントエンド管理画面
 
 ## 6. 実装チェックリスト
 
-### 6.1 Phase 1: Python Backend
-- [ ] Chainlit依存の除去
-- [ ] stdin/stdout JSON API実装
-- [ ] 既存ハンドラーのAPI適応
-- [ ] エラーハンドリング強化
-- [ ] PyInstallerでの実行ファイル化テスト
+### 6.1 Phase 1: 統合Python Backend
+- [ ] 既存Chainlitアプリの保持・最適化
+- [ ] Electron用REST API実装（FastAPI）
+- [ ] 統合起動スクリプト作成
+- [ ] SQLiteデータベース共有設計
+- [ ] APIエンドポイントのテスト
 
 ### 6.2 Phase 2: Electron Frontend  
-- [ ] Main process実装
-- [ ] Preload script作成
-- [ ] IPC通信テスト
-- [ ] Frontend UI実装
-- [ ] Python process管理実装
+- [ ] Main process実装（統合サーバー管理）
+- [ ] Preload script作成（セキュアAPI公開）
+- [ ] タブベースUI実装
+- [ ] Chainlit WebView統合
+- [ ] 管理画面実装（ペルソナ、ベクトルストア、分析）
+- [ ] REST API通信テスト
 
 ### 6.3 Phase 3: パッケージング
-- [ ] electron-builder設定
-- [ ] リソース包含確認
+- [ ] electron-builder設定（Python環境同梱）
+- [ ] リソース包含確認（Python + 依存ライブラリ）
 - [ ] 全プラットフォームビルドテスト
+- [ ] SQLiteデータベースパス設定
 - [ ] インストーラー作成・テスト
 
 ### 6.4 Phase 4: 配布・運用
@@ -724,4 +1113,26 @@ if (!app.isPackaged) {
 
 ---
 
-**本ガイドは、Context7のElectronドキュメント、electron-builder公式ドキュメント、および現在のChainlitプロジェクト分析に基づいて作成されました。実装時は最新のドキュメントも併せてご確認ください。**
+## 7. 実装注意事項
+
+### 7.1 機能分離の重要ポイント
+- **Chainlit**: チャット機能・履歴管理・OpenAI API設定を完全保持
+- **Electron**: データ管理・分析・UI拡張機能に特化
+- **データ連携**: SQLiteデータベース共有による効率的な情報共有
+- **段階的開発**: 既存機能を壊さずに順次機能追加
+
+### 7.2 セキュリティ考慮事項
+- **contextIsolation**: 必ず`true`に設定
+- **nodeIntegration**: 必ず`false`に設定
+- **API認証**: Electron ↔ Python間の通信セキュリティ
+- **ファイルアクセス**: 適切なサンドボックス設定
+
+### 7.3 開発効率化
+- **既存コード活用**: handlers/とutils/をそのまま再利用
+- **段階的テスト**: 各フェーズでの動作確認を徹底
+- **ログ管理**: 開発・デバッグ用の詳細ログ出力
+- **エラーハンドリング**: 堅牢なエラー処理とユーザーフィードバック
+
+---
+
+**本ガイドは、ElectronとChainlitのハイブリッド統合により、既存機能を保持しながらデスクトップアプリ化を実現する実装方針です。Context7のElectronドキュメント、現在のChainlitプロジェクト分析、および機能分離要件に基づいて作成されました。**

@@ -1,0 +1,185 @@
+{
+  "name": "chainlit-ai-workspace",
+  "version": "1.0.0",
+  "description": "Chainlit AI Workspace - 統合デスクトップアプリケーション",
+  "main": "electron/main.js",
+  "homepage": "./",
+  "author": "Chainlit AI Workspace Team",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "electron": "electron . --no-sandbox",
+    "dev": "electron . --no-sandbox",
+    "start": "npm run dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "dist": "npm run build",
+    "postinstall": "electron-builder install-app-deps",
+    "pack": "electron-builder --dir",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "electron-log": "^5.1.7",
+    "electron-updater": "^6.2.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^37.4.0",
+    "electron-builder": "^26.0.12",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.chainlit.ai.workspace",
+    "productName": "Chainlit AI Workspace",
+    "copyright": "Copyright © 2024 Chainlit AI Workspace Team",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "*.py",
+      "utils/**/*",
+      ".chainlit/**/*",
+      ".env.example",
+      "requirements.in",
+      "pyproject.toml",
+      "CLAUDE.md",
+      {
+        "from": ".",
+        "filter": [
+          "package.json",
+          "README.md"
+        ]
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "python_dist",
+        "to": "python_dist"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-${version}-windows-${arch}.${ext}",
+      "requestedExecutionLevel": "asInvoker",
+      "publisherName": "Chainlit AI Workspace Team"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "category": "Office",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": true,
+      "license": "LICENSE",
+      "language": "2052"
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "background": "build/background.png",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://releases.example.com/"
+    }
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=7.0.0"
+  },
+  "keywords": [
+    "chainlit",
+    "ai",
+    "workspace",
+    "electron",
+    "python",
+    "openai",
+    "vector-store",
+    "desktop",
+    "chat",
+    "assistant"
+  ],
+  "directories": {
+    "doc": "docs"
+  }
+}

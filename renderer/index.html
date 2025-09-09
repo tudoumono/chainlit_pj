@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chainlit AI Workspace</title>
+    
+    <!-- セキュリティ: Content Security Policy -->
+    <meta http-equiv="Content-Security-Policy" 
+          content="default-src 'self'; 
+                   script-src 'self' 'unsafe-inline'; 
+                   style-src 'self' 'unsafe-inline'; 
+                   img-src 'self' data: https:; 
+                   connect-src 'self' http://localhost:8000 http://localhost:8001;">
+    
+    <!-- スタイルシート -->
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/tabs.css">
+    <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+    <!-- ロード中の画面 -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <h2>🚀 Chainlit AI Workspace</h2>
+            <p id="loading-message">初期化中...</p>
+        </div>
+    </div>
+
+    <!-- メインアプリケーション -->
+    <div id="main-app" class="main-app hidden">
+        <!-- タイトルバー（カスタムタイトルバー用） -->
+        <div class="title-bar">
+            <div class="title-bar-content">
+                <span class="app-title">Chainlit AI Workspace</span>
+                <div class="window-controls">
+                    <button id="minimize-btn" class="window-control-btn">−</button>
+                    <button id="maximize-btn" class="window-control-btn">⬜</button>
+                    <button id="close-btn" class="window-control-btn close">×</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- タブコンテナ -->
+        <div class="tab-container">
+            <!-- タブヘッダー -->
+            <div class="tab-header">
+                <button class="tab-button active" data-tab="chat">
+                    <span class="tab-icon">💬</span>
+                    <span class="tab-text">チャット</span>
+                </button>
+                <button class="tab-button" data-tab="personas">
+                    <span class="tab-icon">👤</span>
+                    <span class="tab-text">ペルソナ管理</span>
+                </button>
+                <button class="tab-button" data-tab="vectorstores">
+                    <span class="tab-icon">📚</span>
+                    <span class="tab-text">ベクトルストア</span>
+                </button>
+                <button class="tab-button" data-tab="analytics">
+                    <span class="tab-icon">📊</span>
+                    <span class="tab-text">分析</span>
+                </button>
+                <button class="tab-button" data-tab="settings">
+                    <span class="tab-icon">⚙️</span>
+                    <span class="tab-text">設定</span>
+                </button>
+            </div>
+
+            <!-- タブコンテンツ -->
+            <div class="tab-content">
+                <!-- チャットタブ（ChainlitのWebView） -->
+                <div id="chat" class="tab-pane active">
+                    <div class="chainlit-container">
+                        <iframe id="chainlit-frame" 
+                                class="chainlit-frame" 
+                                src="" 
+                                title="Chainlit Chat Interface">
+                        </iframe>
+                    </div>
+                </div>
+
+                <!-- ペルソナ管理タブ -->
+                <div id="personas" class="tab-pane">
+                    <div class="management-panel">
+                        <div class="panel-header">
+                            <h2>ペルソナ管理</h2>
+                            <button id="create-persona-btn" class="btn btn-primary">
+                                ＋ 新しいペルソナ
+                            </button>
+                        </div>
+                        <div id="persona-manager" class="content-area">
+                            <div class="loading-message">ペルソナ管理画面を読み込み中...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ベクトルストア管理タブ -->
+                <div id="vectorstores" class="tab-pane">
+                    <div class="management-panel">
+                        <div class="panel-header">
+                            <h2>ベクトルストア管理</h2>
+                            <button id="create-vectorstore-btn" class="btn btn-primary">
+                                ＋ 新しいベクトルストア
+                            </button>
+                        </div>
+                        <div id="vectorstore-manager" class="content-area">
+                            <div class="loading-message">ベクトルストア管理画面を読み込み中...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分析タブ -->
+                <div id="analytics" class="tab-pane">
+                    <div class="management-panel">
+                        <div class="panel-header">
+                            <h2>使用状況分析</h2>
+                            <div class="header-controls">
+                                <select id="analytics-period" class="form-select">
+                                    <option value="7d">過去7日</option>
+                                    <option value="30d">過去30日</option>
+                                    <option value="90d">過去90日</option>
+                                </select>
+                                <button id="export-analytics-btn" class="btn btn-secondary">
+                                    📊 エクスポート
+                                </button>
+                            </div>
+                        </div>
+                        <div id="analytics-dashboard" class="content-area">
+                            <div class="loading-message">分析ダッシュボードを読み込み中...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 設定タブ -->
+                <div id="settings" class="tab-pane">
+                    <div class="management-panel">
+                        <div class="panel-header">
+                            <h2>システム設定</h2>
+                            <button id="system-health-btn" class="btn btn-secondary">
+                                🔍 システムヘルスチェック
+                            </button>
+                        </div>
+                        <div id="settings-panel" class="content-area">
+                            <div class="loading-message">設定画面を読み込み中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ステータスバー -->
+        <div class="status-bar">
+            <div class="status-left">
+                <span id="connection-status" class="status-indicator">🔴 接続中...</span>
+                <span id="system-status" class="status-text">システム起動中</span>
+            </div>
+            <div class="status-right">
+                <span id="current-time" class="status-text"></span>
+                <span id="version-info" class="status-text">v1.0.0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- モーダルダイアログ -->
+    <div id="modal-overlay" class="modal-overlay hidden">
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 id="modal-title">タイトル</h3>
+                <button id="modal-close-btn" class="modal-close">×</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- モーダル内容がここに入る -->
+            </div>
+            <div class="modal-footer">
+                <button id="modal-cancel-btn" class="btn btn-secondary">キャンセル</button>
+                <button id="modal-confirm-btn" class="btn btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通知トースト -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- JavaScriptファイル -->
+    <script src="js/app.js"></script>
+    <script src="js/tabs.js"></script>
+    <script src="js/personas.js"></script>
+    <script src="js/vectorstores.js"></script>
+    <script src="js/analytics.js"></script>
+    <script src="js/settings.js"></script>
+    <script src="js/modal.js"></script>
+    <script src="js/notifications.js"></script>
+</body>
+</html>

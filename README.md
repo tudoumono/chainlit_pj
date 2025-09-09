@@ -204,6 +204,30 @@ python3 -m py_compile app.py handlers/*.py utils/*.py
 python3 -c "import app; print('Import successful')"
 ```
 
+## 💻 Electron統合と配布方針（重要）
+
+- 起動方式（ADR-0001）: Option B を採用。
+  - Electron Main が埋め込みPythonを直接 `spawn` し、Chainlit(8000) と Electron API(8001) を個別起動・監視・終了します。
+  - 開発時は `uv run`、配布時は `resources/python_dist` の埋め込みPythonを使用します。
+- 代表IPC（予定）: `start-chainlit` / `start-electron-api` / `stop-*`（冪等）
+- 配布要件: `electron-builder` の `extraResources` に `python_dist`（埋め込みPython + 必要site-packages）を同梱します。
+- 環境変数（packaged例）:
+  - `PYTHONHOME`, `PYTHONPATH`, `PATH`（`path.delimiter` 使用）
+  - `CHAINLIT_CONFIG_PATH` → `<resources>/.chainlit/config.toml`
+  - `EXE_DIR`, `CHAT_LOG_DIR`, `CONSOLE_LOG_DIR` → `app.getPath('userData')` 等
+
+### 共有 .env の運用
+- 開発時: ルートの `.env` を使用（両者で共通）。
+- 配布時: 初回起動時に `<userData>/.env` を自動作成（`resources/.env` または `resources/.env.example` をコピー）。以降は同ファイルを Electron と Python の双方で参照。
+- 実装: electron/main.js に `ensureUserEnvFile()` を実装済。`get-system-info` IPC で `dotenvPath` を確認可能。
+
+詳細: docs/STRUCTURE_OPTION_B.md を参照。
+
+選択肢A（`integrated_run.py` による統合起動）を選ばない理由:
+- 起動/終了/ログ/環境変数の責務が分散し、配布運用が複雑化するため。
+- 非エンジニア配布で外部依存（`uv` 等）が残るリスクがあるため。
+- Electron 側でヘルスチェックとUX（再試行・通知）を完結させにくいため。
+
 ### ファイル構造詳細
 
 ```
