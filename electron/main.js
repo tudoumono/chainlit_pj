@@ -25,23 +25,49 @@ function ensureUserEnvFile() {
             return targetEnv;
         }
 
-        // 開発 or 配布のテンプレート候補
+        // サンプルテンプレート（最終フォールバック用）
+        const defaultTemplate = `# Chainlit / Electron 共通設定 (サンプル)
+# 生成場所: ${targetEnv}
+
+# OpenAI API
+OPENAI_API_KEY=
+DEFAULT_MODEL=gpt-4o-mini
+
+# Chainlit 認証
+CHAINLIT_AUTH_SECRET=
+
+# オプション: ベクトルストアIDなど
+# COMPANY_VECTOR_STORE_ID=
+
+# その他アプリ設定（必要に応じて追記）
+`;
+
+        // 開発 or 配布のテンプレート候補を作成
         const cwdEnv = path.join(process.cwd(), '.env');
         const cwdEnvExample = path.join(process.cwd(), '.env.example');
         const resourceEnv = app.isPackaged ? path.join(process.resourcesPath, '.env') : null;
         const resourceEnvExample = app.isPackaged ? path.join(process.resourcesPath, '.env.example') : null;
 
-        const candidates = [cwdEnv, resourceEnv, cwdEnvExample, resourceEnvExample].filter(Boolean);
-        const src = candidates.find(p => {
+        // パッケージ環境では .env.example を優先（秘密情報の同梱を避ける）
+        const candidateOrder = app.isPackaged
+            ? [resourceEnvExample, resourceEnv, cwdEnvExample, cwdEnv]
+            : [cwdEnv, cwdEnvExample, resourceEnv, resourceEnvExample];
+
+        const src = candidateOrder.find(p => {
             try { return p && fs.existsSync(p); } catch { return false; }
         });
 
-        // userData 配下に.envを作成（テンプレートが無ければ空ファイル）
+        // userData 配下に.envを作成（テンプレートが無ければサンプルを生成）
         fs.mkdirSync(userDataDir, { recursive: true });
         if (src) {
-            fs.copyFileSync(src, targetEnv);
+            try {
+                fs.copyFileSync(src, targetEnv);
+            } catch (copyErr) {
+                console.warn('Failed to copy .env template, writing default sample:', copyErr);
+                fs.writeFileSync(targetEnv, defaultTemplate, 'utf-8');
+            }
         } else {
-            fs.writeFileSync(targetEnv, '', 'utf-8');
+            fs.writeFileSync(targetEnv, defaultTemplate, 'utf-8');
         }
 
         process.env.DOTENV_PATH = targetEnv;

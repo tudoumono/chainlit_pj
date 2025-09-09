@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional
 import sqlite3
 import json
 import os
+from dotenv import load_dotenv
 from datetime import datetime
 
 # 既存ハンドラーをインポート
@@ -28,6 +29,13 @@ except ImportError as e:
     vector_store_handler = None
     SQLiteDataLayer = None
     app_logger = None
+
+# .envファイルの読み込み（DOTENV_PATH優先）
+_dotenv_path = os.environ.get("DOTENV_PATH")
+if _dotenv_path and os.path.exists(_dotenv_path):
+    load_dotenv(_dotenv_path)
+else:
+    load_dotenv()
 
 app = FastAPI(
     title="Chainlit Electron API",

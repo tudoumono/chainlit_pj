@@ -221,7 +221,7 @@ python3 -c "import app; print('Import successful')"
 - 配布時: 初回起動時に `<userData>/.env` を自動作成（`resources/.env` または `resources/.env.example` をコピー）。以降は同ファイルを Electron と Python の双方で参照。
 - 実装: electron/main.js に `ensureUserEnvFile()` を実装済。`get-system-info` IPC で `dotenvPath` を確認可能。
 
-詳細: docs/STRUCTURE_OPTION_B.md を参照。
+詳細: docs/STRUCTURE_OPTION_B.md および docs/WINDOWS_PACKAGING.md を参照（配布はWindowsのみ）。
 
 選択肢A（`integrated_run.py` による統合起動）を選ばない理由:
 - 起動/終了/ログ/環境変数の責務が分散し、配布運用が複雑化するため。

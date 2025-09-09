@@ -21,7 +21,10 @@ root/
 ```
 
 ## 配布時の参照先
-- `.env`: 初回起動時に `<userData>/.env` を作成（存在しない場合は `resources/.env` または `resources/.env.example` からコピー）。以降は同ファイルを Electron / Python 双方で参照。
+- `.env`: 初回起動時に `<userData>/.env` を作成。
+  - 優先して `resources/.env.example` をコピー（存在すれば）。
+  - 候補が無い場合は、主要キー（OPENAI_API_KEY, DEFAULT_MODEL, CHAINLIT_AUTH_SECRET など）を含むサンプルテンプレートを自動生成。
+  - 以降は同ファイルを Electron / Python 双方で参照。
 - `CHAINLIT_CONFIG_PATH`: `<resources>/.chainlit/config.toml` を指すように Electron Main から環境変数で指定（起動時に設定）。
 
 ## 開発時の参照先

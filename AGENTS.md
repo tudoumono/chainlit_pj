@@ -11,7 +11,7 @@
 - 依存関係: `uv pip install -r requirements.in`（または`pip install -r requirements.in`）。
 - Chainlitのみ起動: `uv run chainlit run app.py --host 127.0.0.1 --port 8000`（または`python run.py`）。
 - 統合開発（Electron含む）: `npm i && npm run dev`（モックモードは廃止。常に本物のAPIを使用）。
-- Electronビルド: `npm run build:win|mac|linux`。
+- Electronビルド: `npm run build:win`（配布対象はWindowsのみ）。
 - Electron APIのみ: `uv run python electron_api.py`（ポート8001）。
 
 ## コーディング規約と命名
