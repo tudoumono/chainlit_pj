@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         startElectronAPI: () => ipcRenderer.invoke('start-electron-api'),
         openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
         openChat: () => ipcRenderer.invoke('open-chat'),
+        openInBrowser: (path = '') => ipcRenderer.invoke('open-in-browser', path),
         returnToSettings: () => ipcRenderer.invoke('return-to-settings')
     },
     

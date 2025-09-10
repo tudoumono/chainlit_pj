@@ -84,6 +84,22 @@ body {
     background: #ffffff;
 }
 
+/* IME・ドラッグ領域対策: 入力エリアはdrag対象外に */
+.management-panel, .content-area, input, textarea, select, button {
+    -webkit-app-region: no-drag;
+}
+
+/* パネル内ローダー（ダーク背景用） */
+.loading-spinner-dark {
+    width: 32px;
+    height: 32px;
+    border: 4px solid rgba(0, 0, 0, 0.1);
+    border-top: 4px solid #007bff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 0.75rem;
+}
+
 /* タイトルバー */
 .title-bar {
     height: 32px;

@@ -30,6 +30,14 @@ class AnalyticsManager {
                 this.showExportModal();
             });
         }
+
+        // ブラウザで開く
+        const openBrowserBtn = document.getElementById('open-analytics-browser');
+        if (openBrowserBtn && window.electronAPI?.app?.openInBrowser) {
+            openBrowserBtn.addEventListener('click', () => {
+                window.electronAPI.app.openInBrowser('');
+            });
+        }
     }
     
     async loadDashboard() {
@@ -400,8 +408,17 @@ class AnalyticsManager {
     }
 }
 
-// 分析マネージャー初期化
-document.addEventListener('DOMContentLoaded', () => {
-    window.AnalyticsManager = new AnalyticsManager();
-    console.log('✅ Analytics Manager initialized');
-});
+// 分析マネージャー初期化（DOMContentLoaded前後どちらでも安全に初期化）
+(function initAnalyticsManager() {
+    const boot = () => {
+        if (!window.AnalyticsManager) {
+            window.AnalyticsManager = new AnalyticsManager();
+            console.log('✅ Analytics Manager initialized');
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot, { once: true });
+    } else {
+        boot();
+    }
+})();

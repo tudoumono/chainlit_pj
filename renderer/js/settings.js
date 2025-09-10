@@ -532,14 +532,22 @@ class SettingsManager {
     }
 }
 
-// 設定マネージャー初期化
-document.addEventListener('DOMContentLoaded', async () => {
-    window.SettingsManager = new SettingsManager();
-    console.log('✅ Settings Manager initialized');
-    // 初期表示で設定パネルの中身を確実に描画
-    try {
-        await window.SettingsManager.loadSettings();
-    } catch (e) {
-        console.error('❌ Failed to load initial settings:', e);
+// 設定マネージャー初期化（DOMContentLoaded前後どちらでも安全に初期化）
+(async function initSettingsManager() {
+    const boot = async () => {
+        if (!window.SettingsManager) {
+            window.SettingsManager = new SettingsManager();
+            console.log('✅ Settings Manager initialized');
+            try {
+                await window.SettingsManager.loadSettings();
+            } catch (e) {
+                console.error('❌ Failed to load initial settings:', e);
+            }
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => { boot(); }, { once: true });
+    } else {
+        await boot();
     }
-});
+})();

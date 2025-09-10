@@ -20,14 +20,43 @@ class VectorStoreManager {
                 this.showCreateVectorStoreModal();
             });
         }
+
+        // ブラウザで開く
+        const openBrowserBtn = document.getElementById('open-vectorstores-browser');
+        if (openBrowserBtn && window.electronAPI?.app?.openInBrowser) {
+            openBrowserBtn.addEventListener('click', () => {
+                window.electronAPI.app.openInBrowser('');
+            });
+        }
     }
     
     async loadVectorStores() {
         if (this.isLoaded) return;
-        
+
+        // ローディング表示
+        const container = document.getElementById('vectorstore-manager');
+        if (container) {
+            container.innerHTML = `
+                <div class="content-area">
+                    <div class="loading-message">
+                        <div class="loading-spinner-dark"></div>
+                        <div id="vs-loading-text">ベクトルストア一覧を読み込み中...</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 長時間時の案内（3秒後に文言を更新）
+        let slowNoticeTimer = null;
         try {
             console.log('🔄 Loading vector stores...');
-            
+            slowNoticeTimer = setTimeout(() => {
+                const textEl = document.getElementById('vs-loading-text');
+                if (textEl) {
+                    textEl.textContent = '時間がかかっています… 大きなデータの集計中か、ネットワーク待機中です';
+                }
+            }, 3000);
+
             const response = await window.electronAPI.vectorStore.list();
             if (response && response.success) {
                 this.vectorStores = response.data || [];
@@ -43,6 +72,10 @@ class VectorStoreManager {
         } catch (error) {
             console.error('❌ Error loading vector stores:', error);
             this.renderError('ベクトルストアの読み込みに失敗しました: ' + error.message);
+        } finally {
+            if (slowNoticeTimer) {
+                clearTimeout(slowNoticeTimer);
+            }
         }
     }
     

@@ -18,7 +18,32 @@ try {
         'BlockThirdPartyCookies,SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure'
     );
     // 2) 一部環境（WSL/VM 等）のGPU初期化エラー回避
-    app.disableHardwareAcceleration();
+    // 日本語IMEの候補ウィンドウ位置ずれ/入力障害が出る環境があるため、
+    // 既定ではハードウェアアクセラレーションを有効のままにする。
+    // 必要時のみ DISABLE_HW_ACCELERATION=true で無効化。
+    if (process.env.DISABLE_HW_ACCELERATION === 'true') {
+        app.disableHardwareAcceleration();
+    }
+
+    // 3) Wayland 環境でのIMEサポートを有効化（Electron 25+）
+    if (process.platform === 'linux') {
+        const sessionType = (process.env.XDG_SESSION_TYPE || '').toLowerCase();
+        const ozoneHint = (process.env.OZONE_HINT || '').toLowerCase(); // 'wayland' | 'x11' | ''
+        if (sessionType === 'wayland') {
+            app.commandLine.appendSwitch('enable-wayland-ime');
+        }
+        // 明示的にプラットフォームを指定可能（WSLでのIME問題回避用トグル）
+        if (ozoneHint === 'wayland' || ozoneHint === 'x11') {
+            app.commandLine.appendSwitch('ozone-platform-hint', ozoneHint);
+        } else if (sessionType === 'wayland') {
+            // 既定は Wayland を優先
+            app.commandLine.appendSwitch('ozone-platform-hint', 'wayland');
+        }
+        // GTK4 を試験的に有効化（IME周りの互換性改善）
+        if (process.env.GTK_VERSION === '4') {
+            app.commandLine.appendSwitch('gtk-version', '4');
+        }
+    }
 } catch {}
 const log = require('electron-log');
 
@@ -471,6 +496,14 @@ app.on('before-quit', () => {
 ipcMain.handle('electron-api', async (event, endpoint, method, data) => {
     try {
         const result = await chainlitManager.callElectronAPI(endpoint, method, data);
+        // FastAPI標準形 {status: 'success'|'error', data|detail} をフロント向けにフラット化
+        if (result && typeof result === 'object' && 'status' in result) {
+            if (result.status === 'success') {
+                return { success: true, data: result.data };
+            }
+            const message = result.detail || result.error || 'API error';
+            return { success: false, error: message };
+        }
         return { success: true, data: result };
     } catch (error) {
         return { success: false, error: error.message };
@@ -569,6 +602,18 @@ ipcMain.handle('window-close', () => {
 ipcMain.handle('open-log-folder', async () => {
     const dir = ensureLogDir();
     return await shell.openPath(dir);
+});
+
+// 既定ブラウザでChainlitを開く（必要に応じてパスを付与）
+ipcMain.handle('open-in-browser', async (event, urlPath = '') => {
+    try {
+        const base = chainlitManager.chainlitUrl || 'http://localhost:8000';
+        const url = urlPath ? `${base}${urlPath}` : base;
+        await shell.openExternal(url);
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: String(e) };
+    }
 });
 
 console.log('📱 Electron Main Process initialized');

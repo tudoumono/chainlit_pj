@@ -20,6 +20,14 @@ class PersonaManager {
                 this.showCreatePersonaModal();
             });
         }
+
+        // ブラウザで開く
+        const openBrowserBtn = document.getElementById('open-personas-browser');
+        if (openBrowserBtn && window.electronAPI?.app?.openInBrowser) {
+            openBrowserBtn.addEventListener('click', () => {
+                window.electronAPI.app.openInBrowser('');
+            });
+        }
     }
     
     async loadPersonas() {
@@ -346,8 +354,17 @@ class PersonaManager {
     }
 }
 
-// ペルソナマネージャー初期化
-document.addEventListener('DOMContentLoaded', () => {
-    window.PersonaManager = new PersonaManager();
-    console.log('✅ Persona Manager initialized');
-});
+// ペルソナマネージャー初期化（DOMContentLoaded前後どちらでも安全に初期化）
+(function initPersonaManager() {
+    const boot = () => {
+        if (!window.PersonaManager) {
+            window.PersonaManager = new PersonaManager();
+            console.log('✅ Persona Manager initialized');
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot, { once: true });
+    } else {
+        boot();
+    }
+})();

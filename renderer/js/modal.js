@@ -29,8 +29,9 @@ class Modal {
             }
         });
         
-        // Escapeキーで閉じる
+        // Escapeキーで閉じる（IME合成中は無視）
         document.addEventListener('keydown', (event) => {
+            if (event.isComposing) return; // 日本語IME合成中はESCを奪わない
             if (event.key === 'Escape' && this.isVisible) {
                 event.preventDefault();
                 this.hide();

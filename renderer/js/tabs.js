@@ -55,6 +55,8 @@ class TabManager {
         
         // キーボードショートカット
         document.addEventListener('keydown', (event) => {
+            // 日本語IMEの合成中はショートカット無効化
+            if (event.isComposing) return;
             if (event.ctrlKey || event.metaKey) {
                 const keyMap = {
                     '1': 'settings',
@@ -86,20 +88,18 @@ class TabManager {
         console.log(`🔄 Switching from '${this.activeTab}' to '${tabId}'`);
         
         try {
-            // ローディング状態を表示
+            // ローディング状態を表示（まずプレースホルダを描画）
             this.showTabLoading(tabId);
-            
+
+            // 先にUIを切り替えてローディングを見せる
+            this.updateTabUI(tabId);
+            this.activeTab = tabId;
+
             // タブの非同期読み込み
             if (!this.loadedTabs.has(tabId)) {
                 await this.loadTabContent(tabId);
                 this.loadedTabs.add(tabId);
             }
-            
-            // UIの更新
-            this.updateTabUI(tabId);
-            
-            // アクティブタブの更新
-            this.activeTab = tabId;
             
             console.log(`✅ Tab switched to '${tabId}'`);
             
@@ -169,6 +169,52 @@ class TabManager {
         const button = this.tabButtons.get(tabId);
         if (button && !this.loadedTabs.has(tabId)) {
             button.classList.add('loading');
+        }
+
+        // 初回遷移時はペイン内にもローディングUIを描画
+        if (!this.loadedTabs.has(tabId)) {
+            const pane = this.tabPanes.get(tabId);
+            if (pane) {
+                // タブ別のメッセージ
+                const messages = {
+                    personas: 'ペルソナ一覧を読み込み中...',
+                    vectorstores: 'ベクトルストア一覧を読み込み中...',
+                    analytics: '分析データを読み込み中...',
+                    settings: '設定を読み込み中...'
+                };
+                const msg = messages[tabId] || '読み込み中...';
+
+                // タブごとの専用コンテナにローディングを描画（既存IDを壊さない）
+                const containerIdMap = {
+                    personas: 'persona-manager',
+                    vectorstores: 'vectorstore-manager',
+                    analytics: 'analytics-dashboard',
+                    settings: 'settings-panel'
+                };
+                const targetId = containerIdMap[tabId];
+                if (targetId) {
+                    const container = document.getElementById(targetId);
+                    if (container) {
+                        container.innerHTML = `
+                            <div class="loading-message">
+                                <div class="loading-spinner-dark"></div>
+                                <div>${msg}</div>
+                            </div>
+                        `;
+                        return; // 専用コンテナに描画できたので終了
+                    }
+                }
+
+                // 一般的なペイン内ローディング
+                pane.innerHTML = `
+                    <div class="content-area">
+                        <div class="loading-message">
+                            <div class="loading-spinner-dark"></div>
+                            <div>${msg}</div>
+                        </div>
+                    </div>
+                `;
+            }
         }
     }
     

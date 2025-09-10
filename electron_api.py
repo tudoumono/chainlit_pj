@@ -14,21 +14,39 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 
-# 既存ハンドラーをインポート
+# 既存ハンドラーをインポート（依存ごとに独立して読み込み、片方の失敗で全体を落とさない）
+persona_handler_instance = None
+analytics_handler_instance = None
+vector_store_handler = None
+SQLiteDataLayer = None
+app_logger = None
+
 try:
-    from handlers.persona_handler import persona_handler_instance
-    from handlers.analytics_handler import analytics_handler_instance  
-    from utils.vector_store_handler import vector_store_handler
-    from data_layer import SQLiteDataLayer
-    from utils.logger import app_logger
-except ImportError as e:
-    print(f"Warning: Some handlers not available: {e}")
-    # 開発時のフォールバック
-    persona_handler_instance = None
-    analytics_handler_instance = None
-    vector_store_handler = None
-    SQLiteDataLayer = None
-    app_logger = None
+    from handlers.persona_handler import persona_handler_instance  # type: ignore
+except Exception as e:
+    print(f"Warning: persona_handler not available: {e}")
+
+try:
+    # analytics_handler_instance は未定義のため読み込みをスキップ
+    # from handlers.analytics_handler import analytics_handler_instance
+    pass
+except Exception as e:
+    print(f"Warning: analytics_handler not available: {e}")
+
+try:
+    from utils.vector_store_handler import vector_store_handler  # type: ignore
+except Exception as e:
+    print(f"Warning: vector_store_handler not available: {e}")
+
+try:
+    from data_layer import SQLiteDataLayer  # type: ignore
+except Exception as e:
+    print(f"Warning: SQLiteDataLayer not available: {e}")
+
+try:
+    from utils.logger import app_logger  # type: ignore
+except Exception as e:
+    print(f"Warning: app_logger not available: {e}")
 
 # .envファイルの読み込み（DOTENV_PATH優先）
 _dotenv_path = os.environ.get("DOTENV_PATH")
@@ -37,11 +55,48 @@ if _dotenv_path and os.path.exists(_dotenv_path):
 else:
     load_dotenv()
 
+# .env読み込み後にVector Store Handlerを再初期化
+try:
+    if 'vector_store_handler' in globals() and vector_store_handler is not None:
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if api_key:
+            # APIキーを反映しつつクライアント再初期化
+            try:
+                vector_store_handler.update_api_key(api_key)
+            except Exception:
+                # update_api_keyが失敗した場合は直接初期化を試みる
+                vector_store_handler._init_clients()
+        else:
+            # APIキーが空でも初期化だけは実行（ログに警告が出る）
+            vector_store_handler._init_clients()
+except Exception as _e:
+    print(f"Vector store handler reinit failed: {_e}")
+
 app = FastAPI(
     title="Chainlit Electron API",
     description="ElectronアプリケーションのAPI管理機能",
     version="1.0.0"
 )
+
+# 内部ユーティリティ: Vector Store Handlerの初期化保証
+def _ensure_vector_store_ready() -> bool:
+    try:
+        global vector_store_handler
+        if not vector_store_handler:
+            return False
+        if getattr(vector_store_handler, 'async_client', None) is None:
+            # .env反映後の再初期化を試行
+            api_key = os.getenv("OPENAI_API_KEY", "")
+            if api_key:
+                try:
+                    vector_store_handler.update_api_key(api_key)
+                except Exception:
+                    vector_store_handler._init_clients()
+            else:
+                vector_store_handler._init_clients()
+        return getattr(vector_store_handler, 'async_client', None) is not None
+    except Exception:
+        return False
 
 # CORS設定（Electronからのアクセス許可）
 app.add_middleware(
@@ -246,22 +301,135 @@ async def delete_persona(persona_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ベクトルストア管理エンドポイント
+# ベクトルストア管理エンドポイント（OpenAI API経由）
 @app.get("/api/vectorstores")
 async def list_vector_stores():
-    """ベクトルストア一覧取得"""
+    """ベクトルストア一覧取得（OpenAIのvector_storesを直接列挙）"""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT user_id, vector_store_id, created_at, updated_at
-            FROM user_vector_stores
-            ORDER BY created_at DESC
-        """)
-        vector_stores = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        
-        return {"status": "success", "data": vector_stores}
+        if not _ensure_vector_store_ready():
+            raise HTTPException(status_code=503, detail="Vector store handler is not initialized")
+
+        stores = await vector_store_handler.list_vector_stores()
+        return {"status": "success", "data": stores}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CreateVectorStoreRequest(BaseModel):
+    name: str
+    expires_after_days: Optional[int] = None
+
+
+@app.post("/api/vectorstores")
+async def create_vector_store(req: CreateVectorStoreRequest):
+    """ベクトルストア作成"""
+    try:
+        if not _ensure_vector_store_ready():
+            raise HTTPException(status_code=503, detail="Vector store handler is not initialized")
+
+        vs_id = await vector_store_handler.create_vector_store(name=req.name)
+        if not vs_id:
+            raise HTTPException(status_code=500, detail="Failed to create vector store")
+
+        info = await vector_store_handler.get_vector_store_info(vs_id) or {"id": vs_id, "name": req.name}
+        return {"status": "success", "data": info}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/vectorstores/{vector_store_id}")
+async def get_vector_store(vector_store_id: str):
+    """ベクトルストア詳細+ファイル一覧"""
+    try:
+        if not _ensure_vector_store_ready():
+            raise HTTPException(status_code=503, detail="Vector store handler is not initialized")
+
+        info = await vector_store_handler.get_vector_store_info(vector_store_id)
+        if not info:
+            raise HTTPException(status_code=404, detail="Vector store not found")
+
+        files = await vector_store_handler.get_vector_store_files(vector_store_id)
+        # renderer期待フォーマットに合わせた簡易変換
+        file_details = []
+        for f in files:
+            file_details.append({
+                "id": f.get("id"),
+                "filename": f.get("id"),
+                "size": f.get("size", 0),
+                "status": f.get("status", "processed"),
+                "created_at": f.get("created_at")
+            })
+
+        info["file_details"] = file_details
+        return {"status": "success", "data": info}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class UploadToVectorStoreRequest(BaseModel):
+    filename: str
+    content: str  # data URLまたはbase64文字列
+    size: Optional[int] = 0
+    type: Optional[str] = None
+
+
+@app.post("/api/vectorstores/{vector_store_id}/upload")
+async def upload_to_vector_store(vector_store_id: str, req: UploadToVectorStoreRequest):
+    """ファイルをアップロードしてベクトルストアに追加"""
+    try:
+        if not _ensure_vector_store_ready():
+            raise HTTPException(status_code=503, detail="Vector store handler is not initialized")
+
+        # contentがdata URL形式の場合にbase64本体を抽出
+        content = req.content
+        if "," in content:
+            content = content.split(",", 1)[1]
+        import base64
+        try:
+            file_bytes = base64.b64decode(content)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid file content encoding")
+
+        # OpenAIにファイルアップロード
+        file_id = await vector_store_handler.upload_file_from_bytes(
+            file_bytes=file_bytes,
+            filename=req.filename,
+            purpose="assistants"
+        )
+        if not file_id:
+            raise HTTPException(status_code=500, detail="Failed to upload file")
+
+        # ベクトルストアに追加（ポーリング含む）
+        attached = await vector_store_handler.add_file_to_vector_store(vector_store_id, file_id)
+        if not attached:
+            raise HTTPException(status_code=500, detail="Failed to attach file to vector store")
+
+        return {"status": "success", "data": {"file_id": file_id}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/vectorstores/{vector_store_id}")
+async def delete_vector_store(vector_store_id: str):
+    """ベクトルストア削除"""
+    try:
+        if not _ensure_vector_store_ready():
+            raise HTTPException(status_code=503, detail="Vector store handler is not initialized")
+
+        ok = await vector_store_handler.delete_vector_store(vector_store_id)
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to delete vector store")
+        return {"status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
