@@ -47,9 +47,34 @@ try {
 } catch {}
 const log = require('electron-log');
 
+function loadEnvFileIntoProcess(targetEnvPath) {
+    try {
+        if (!targetEnvPath) return;
+        const raw = fs.readFileSync(targetEnvPath, "utf-8");
+        raw.split(/?
+/).forEach((line) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) return;
+            const idx = trimmed.indexOf('=');
+            if (idx === -1) return;
+            const key = trimmed.slice(0, idx).trim();
+            const val = trimmed.slice(idx + 1).trim().replace(/^"|"$/g, '');
+            if (key && !(key in process.env)) {
+                process.env[key] = val;
+            }
+        });
+    } catch {}
+}
+
+
 function getLogDir() {
-    // ワーキングフォルダ直下に Log/ を作成して使用（env LOG_DIR があれば優先）
-    return process.env.LOG_DIR || path.join(process.cwd(), 'Log');
+    try {
+        if (process.env.LOG_DIR) return process.env.LOG_DIR;
+        const userData = app.getPath('userData');
+        return path.join(userData, 'logs');
+    } catch {
+        return path.join(process.cwd(), 'Log');
+    }
 }
 
 function ensureLogDir() {
@@ -151,8 +176,12 @@ class ChainlitIntegratedManager {
         this.pythonProcess = null; // backward compat (will hold chainlitProcess)
         this.chainlitProcess = null;
         this.apiProcess = null;
-        this.chainlitUrl = 'http://localhost:8000';
-        this.electronApiUrl = 'http://localhost:8001';
+        const chainlitPort = process.env.CHAINLIT_PORT || '8000';
+        const chainlitHost = process.env.CHAINLIT_HOST || '127.0.0.1';
+        const apiPort = process.env.ELECTRON_API_PORT || '8001';
+        const apiHost = process.env.ELECTRON_API_HOST || '127.0.0.1';
+        this.chainlitUrl = `http://${chainlitHost}:${chainlitPort}`;
+        this.electronApiUrl = `http://${apiHost}:${apiPort}`;
         this.mainWindow = null;
     }
 
@@ -168,7 +197,7 @@ class ChainlitIntegratedManager {
                 const { spawn } = require('child_process');
                 const check = spawn('uv', ['run', 'python', '-c', 'import tenacity; print("ok")'], {
                     cwd: this.getPaths().pythonBackendDir,
-                    env: this.buildPythonEnv(),
+                    env: this.buildPythonEnv({ LOG_DIR: getLogDir() }),
                     stdio: ['ignore', 'pipe', 'pipe']
                 });
                 let output = '';
@@ -181,7 +210,7 @@ class ChainlitIntegratedManager {
                     // 無ければ最小限でインストール（requirements.in 全体より速い）
                     const install = spawn('uv', ['pip', 'install', 'tenacity>=9.0.0'], {
                         cwd: this.getPaths().pythonBackendDir,
-                        env: this.buildPythonEnv(),
+                        env: this.buildPythonEnv({ LOG_DIR: getLogDir(), ELECTRON_API_PORT: String(process.env.ELECTRON_API_PORT || '8001') }),
                         stdio: ['ignore', 'pipe', 'pipe']
                     });
                     // タイムアウト保険（30秒）
@@ -260,12 +289,14 @@ class ChainlitIntegratedManager {
         let command;
         let args;
         let cwd = pythonBackendDir;
+        const chainlitPort = String(process.env.CHAINLIT_PORT || '8000');
+        const chainlitHost = String(process.env.CHAINLIT_HOST || '127.0.0.1');
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
-            args = ['-m', 'chainlit', 'run', path.join(pythonBackendDir, 'app.py'), '--host', '127.0.0.1', '--port', '8000'];
+            args = ['-m', 'chainlit', 'run', path.join(pythonBackendDir, 'app.py'), '--host', chainlitHost, '--port', chainlitPort];
         } else {
             command = 'uv';
-            args = ['run', 'chainlit', 'run', path.join(baseDir, 'app.py'), '--host', '127.0.0.1', '--port', '8000'];
+            args = ['run', 'chainlit', 'run', path.join(baseDir, 'app.py'), '--host', chainlitHost, '--port', chainlitPort];
         }
         this.chainlitProcess = spawn(command, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -459,6 +490,15 @@ app.whenReady().then(async () => {
         const dotenvPath = ensureUserEnvFile();
         if (dotenvPath) {
             console.log('📄 Using .env at:', dotenvPath);
+            // Load variables into process.env for Electron side
+            loadEnvFileIntoProcess(dotenvPath);
+            // Recompute URLs based on env overrides
+            const clPort = process.env.CHAINLIT_PORT || '8000';
+            const clHost = process.env.CHAINLIT_HOST || '127.0.0.1';
+            const apiPort2 = process.env.ELECTRON_API_PORT || '8001';
+            const apiHost2 = process.env.ELECTRON_API_HOST || '127.0.0.1';
+            chainlitManager.chainlitUrl = `http://${clHost}:${clPort}`;
+            chainlitManager.electronApiUrl = `http://${apiHost2}:${apiPort2}`;
         }
         
         // Python統合サーバーを起動

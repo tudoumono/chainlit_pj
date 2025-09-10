@@ -1,0 +1,37 @@
+name: Windows Build
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+    paths:
+      - 'electron/**'
+      - 'renderer/**'
+      - 'app.py'
+      - 'electron_api.py'
+      - 'package.json'
+      - '.chainlit/**'
+      - 'scripts/**'
+      - 'docs/**'
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install deps
+        run: |
+          npm ci
+      - name: Prepare python_dist (manual)
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/build_python_dist.ps1 -PythonVersion 3.10.11
+      - name: Build
+        run: |
+          npm run build:win
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist

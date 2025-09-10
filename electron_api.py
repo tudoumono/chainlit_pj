@@ -988,15 +988,44 @@ async def export_analytics(user_id: str, format: str = "json"):
 # ログ管理エンドポイント
 @app.get("/api/system/logs")
 async def get_system_logs():
-    """システムログ取得"""
+    """システムログ取得（<userData>/logs および従来の .chainlit/app.log を統合）"""
     try:
-        log_file = ".chainlit/app.log"
-        if os.path.exists(log_file):
-            with open(log_file, 'r', encoding='utf-8') as f:
-                logs = f.readlines()[-100:]  # 最新100行
-            return {"status": "success", "data": {"logs": logs}}
-        else:
-            return {"status": "success", "data": {"logs": []}}
+        import os
+        import itertools
+        import io
+        log_dir = os.getenv('LOG_DIR') or ''
+        files = []
+        if log_dir and os.path.isdir(log_dir):
+            for name in [
+                'main.log',
+                'chainlit.out.log', 'chainlit.err.log',
+                'electron-api.out.log', 'electron-api.err.log'
+            ]:
+                p = os.path.join(log_dir, name)
+                if os.path.exists(p):
+                    files.append(p)
+        legacy = os.path.join('.chainlit', 'app.log')
+        if os.path.exists(legacy):
+            files.append(legacy)
+        logs = []
+        def tail_lines(path, n=100):
+            try:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.readlines()[-n:]
+            except Exception:
+                return []
+        for fpath in files:
+            lst = tail_lines(fpath, 50)
+            if lst:
+                logs.append(f"===== {os.path.basename(fpath)} =====
+")
+                logs.extend(lst)
+                if not lst[-1].endswith('
+'):
+                    logs.append('
+')
+        # 何もなければ空配列
+        return {"status": "success", "data": {"logs": logs}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1025,9 +1054,9 @@ def run_electron_api():
     """Electron用APIサーバーを起動"""
     import uvicorn
     uvicorn.run(
-        app, 
-        host="127.0.0.1", 
-        port=8001, 
+        app,
+        host=os.getenv("ELECTRON_API_HOST", "127.0.0.1"),
+        port=int(os.getenv("ELECTRON_API_PORT", "8001")),
         log_level="info",
         reload=False
     )

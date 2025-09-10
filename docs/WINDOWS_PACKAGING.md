@@ -1,70 +1,44 @@
-# Windows 配布パッケージング手順（Option B）
+# Windows Packaging Guide (Option B)
 
-この手順は Windows 配布（.exe）専用です。Electron Main が埋め込みPythonを直接 spawn し、Chainlit(8000) と Electron API(8001) を起動します。
+This document describes how to build the Windows distributable with embedded Python (`python_dist/`) and Electron.
 
-## 前提
-- Node.js/NPM が導入済み
-- Electron Builder が devDependencies に含まれている（package.json 済）
-- Python ランタイムと必要パッケージを同梱（`python_dist/`）
+Important: Perform Windows-specific steps on a Windows machine after cloning the repository.
 
-## フォルダ構成（抜粋）
-```
-project_root/
-├─ electron/
-├─ renderer/
-├─ app.py, electron_api.py, handlers/, utils/, .chainlit/
-├─ python_dist/                 # 同梱する埋め込みPython
-│  ├─ python.exe
-│  ├─ python3.dll 等（Python配布物に同梱）
-│  └─ Lib\site-packages\       # 依存パッケージ（Chainlit, FastAPI, Uvicorn, OpenAI等）
-├─ .env.example                 # 初期テンプレート（リソースに同梱）
-└─ package.json
-```
+## Overview
+- Python backend is spawned by Electron Main.
+- Ports are configurable via `.env`: `CHAINLIT_PORT` (default 8000) and `ELECTRON_API_PORT` (default 8001).
+- Logs are written under `<UserData>/logs` and exposed in the UI.
 
-推奨 site-packages（例）
-- chainlit
-- fastapi
-- uvicorn
-- pydantic
-- openai（Responses API）
-- httpx / aiohttp（必要に応じて）
-- python-dotenv（DOTENV_PATHの読取りに使う場合）
+## Prerequisites (Windows)
+- Node.js 18+ (x64)
+- Python 3.10+ (for development); for distribution use the embeddable package
+- Git, 7-Zip or PowerShell (for extracting archives)
 
-## Electron Main の動作（Windows）
-- 埋め込みPythonパス: `resources/python_dist/python.exe`
-- 環境変数（spawn時）
-  - `PYTHONHOME`: `resources/python_dist`
-  - `PYTHONPATH`: `resources/python_dist/Lib/site-packages`
-  - `PATH`: `PYTHONHOME;既存PATH`
-  - `CHAINLIT_CONFIG_PATH`: `resources/.chainlit/config.toml`
-  - `DOTENV_PATH`: `<userData>/.env`（初回起動時に自動作成）
+## Steps
+1. Clone the repository
+   - `git clone <your repo>`
+   - `cd chainlit_pj`
+2. Install dependencies (dev)
+   - `npm i`
+   - `uv pip install -r requirements.in` (or `pip install -r requirements.in`)
+3. Prepare `.env`
+   - Copy `.env.example` to `.env`
+   - Set `OPENAI_API_KEY`, `CHAINLIT_AUTH_SECRET`, `DEFAULT_MODEL`, and optionally the ports `CHAINLIT_PORT`, `ELECTRON_API_PORT`.
+4. Create `python_dist/` (embedded Python)
+   - See `scripts/build_python_dist.ps1` and run it in PowerShell.
+   - It creates `python_dist/` with `python.exe` and required site-packages.
+5. Package
+   - `npm run build:win` (electron-builder)
+   - Output artifacts in `dist/`
 
-## .env の扱い
-- 初回起動時に Electron が `<userData>/.env` を生成
-  - 優先して `resources/.env.example` をコピー（存在しない場合はビルトインのサンプルテンプレートを生成）
-- 以降はユーザーが `<userData>/.env` を編集して設定を変更
+## Verification
+- Run the packaged app and confirm:
+  - First launch generates `<UserData>/.env` if absent
+  - Settings tab loads; “Open Chat” navigates to Chainlit (top-level)
+  - Logs available via “Open Log Folder” and “System Logs”
+  - Health check shows both servers healthy
 
-## ビルド
-```bash
-# 依存インストール
-npm i
-
-# Windows用パッケージを作成
-npm run build:win
-```
-
-出力物
-- `dist/Chainlit AI Workspace-<version>-windows-x64.exe`（NSIS）
-- `dist/Chainlit AI Workspace-<version>-windows-x64.portable.exe`（Portable）
-
-## テスト項目
-- 起動後に Chainlit(8000) と Electron API(8001) が起動し、UIが表示されること
-- `<userData>/.env` が生成され、編集が反映されること
-- ログはアプリのワーキングフォルダ直下の `Log/` に出力されること（なければ自動作成）
-- 終了時に子プロセス（Chainlit/Electron API）が確実に終了すること
-- ログ、CSP等のセキュリティ設定が意図通りであること
-
-## トラブルシュート
-- ポート競合: 8000/8001 を占有するプロセスがないか確認
-- 埋め込みPythonに依存が不足: `Lib\site-packages` の内容を再確認
-- 環境変数: `CHAINLIT_CONFIG_PATH` と `DOTENV_PATH` が正しく設定されているか確認
+## Troubleshooting
+- Port conflicts → adjust ports in `.env` and retry
+- Missing packages → run `uv pip install -r requirements.in` and repackage
+- OpenAI errors → verify API key and default model

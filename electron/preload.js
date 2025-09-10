@@ -121,3 +121,28 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 console.log('🔒 Preload script loaded - Secure APIs exposed');
+
+
+// DynamicCSPUpdateMarker
+// 動的CSP更新（環境変数のポートに追従）
+try {
+  window.addEventListener('DOMContentLoaded', () => {
+    const clPort = process.env.CHAINLIT_PORT || "8000";
+    const apiPort = process.env.ELECTRON_API_PORT || "8001";
+    const clHost = process.env.CHAINLIT_HOST || "127.0.0.1";
+    const apiHost = process.env.ELECTRON_API_HOST || "127.0.0.1";
+    const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    if (meta) {
+      const csp = [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https:",
+        "connect-src 'self' http://"+clHost+":"+clPort+" http://"+apiHost+":"+apiPort,
+        "frame-src 'self' http://"+clHost+":"+clPort
+      ].join('; ');
+      meta.setAttribute('content', csp);
+      console.log('🔐 CSP updated for ports', { clPort, apiPort });
+    }
+  });
+} catch {}

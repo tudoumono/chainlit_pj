@@ -328,3 +328,10 @@ MIT License
 - **v0.3.0** - データベース基盤
 - **v0.2.0** - 設定管理機能
 - **v0.1.0** - 初期リリース
+
+## Ports and Logs
+- Ports are configurable via `.env`: `CHAINLIT_PORT` (default 8000), `ELECTRON_API_PORT` (default 8001).
+- Electron main updates CSP dynamically to match these ports.
+- Logs are written under `<UserData>/logs` and accessible via Settings.
+
+Windows packaging steps: see `docs/WINDOWS_PACKAGING.md` and `docs/WINDOWS_TASKS.md`.

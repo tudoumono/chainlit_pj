@@ -129,6 +129,8 @@ class SettingsManager {
             </div>
         `;
         
+                this.bindRenderedEvents();
+
         this.setupSettingsEventListeners();
     }
 
@@ -191,10 +193,10 @@ class SettingsManager {
                 ${rows.join('\n')}
             </div>
             <div style="margin-top: 1rem; display: flex; gap: 0.75rem;">
-                <button onclick="window.SettingsManager.refreshSystemStatus()" class="btn btn-secondary">🔄 再取得</button>
-                <button onclick="window.SettingsManager.runSystemHealthCheck()" class="btn btn-primary">🔍 ヘルスチェック実行</button>
-                <button onclick="window.SettingsManager.viewSystemLogs()" class="btn btn-secondary">📜 システムログを表示</button>
-                <button onclick="window.SettingsManager.exportSystemInfo()" class="btn btn-secondary">📊 システム情報エクスポート</button>
+                <button id="btn-refresh-status" class="btn btn-secondary">🔄 再取得</button>
+                <button id="btn-run-health" class="btn btn-primary">🔍 ヘルスチェック実行</button>
+                <button id="btn-view-logs" class="btn btn-secondary">📜 システムログを表示</button>
+                <button id="btn-export-info-adv" class="btn btn-secondary">📊 システム情報エクスポート</button>
             </div>
         `;
     }
@@ -217,10 +219,10 @@ class SettingsManager {
                 
                 
                 <div class="settings-actions">
-                    <button onclick="window.SettingsManager.saveGeneralSettings()" class="btn btn-primary">
+                    <button id="btn-save-general" class="btn btn-primary">
                         💾 設定を保存
                     </button>
-                    <button onclick="window.SettingsManager.resetGeneralSettings()" class="btn btn-secondary">
+                    <button id="btn-reset-general" class="btn btn-secondary">
                         🔄 デフォルトに戻す
                     </button>
                 </div>
@@ -232,10 +234,10 @@ class SettingsManager {
         return `
             <div class="settings-form">
                 <div class="data-management-actions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                    <button onclick="window.SettingsManager.cleanupData()" class="btn btn-secondary">
+                    <button id="btn-cleanup-data" class="btn btn-secondary">
                         🧹 データクリーンアップ
                     </button>
-                    <button onclick="window.SettingsManager.resetAllData()" class="btn btn-danger">
+                    <button id="btn-reset-all" class="btn btn-danger">
                         ⚠️ 全データリセット
                     </button>
                 </div>
@@ -250,7 +252,7 @@ class SettingsManager {
                     <label class="settings-label">OpenAI API キー疎通テスト</label>
                     <div style="display: flex; gap: 0.5rem; align-items: center;">
                         <input type="password" id="openai-api-key" class="form-input" placeholder="sk-...（未入力なら現在のキーを使用）" style="flex: 1;">
-                        <button onclick="window.SettingsManager.testApiKey()" class="btn btn-secondary">🔍 テスト</button>
+                        <button id="btn-test-api" class="btn btn-secondary">🔍 テスト</button>
                     </div>
                     <small class="settings-help">テストは最小限のリクエストで行われ、OpenAI側のリソースに変更は加えません。</small>
                 </div>
@@ -262,16 +264,16 @@ class SettingsManager {
         return `
             <div class="settings-form">
                 <div class="advanced-actions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                    <button onclick="window.SettingsManager.openDevTools()" class="btn btn-secondary">
+                    <button id="btn-open-devtools" class="btn btn-secondary">
                         🔧 開発者ツールを開く
                     </button>
-                    <button onclick="window.SettingsManager.restartApplication()" class="btn btn-warning">
+                    <button id="btn-restart-app" class="btn btn-warning">
                         🔄 アプリケーション再起動
                     </button>
-                    <button onclick="window.SettingsManager.viewSystemLogs()" class="btn btn-secondary">
+                    <button id="btn-view-logs-adv" class="btn btn-secondary">
                         📜 システムログを表示
                     </button>
-                    <button onclick="window.SettingsManager.exportSystemInfo()" class="btn btn-secondary">
+                    <button id="btn-export-info-adv" class="btn btn-secondary">
                         📊 システム情報エクスポート
                     </button>
                 </div>
@@ -287,7 +289,7 @@ class SettingsManager {
                     <div class="alert alert-danger">
                         <h4>⚠️ エラーが発生しました</h4>
                         <p>${this.escapeHtml(message)}</p>
-                        <button onclick="window.SettingsManager.reloadSettings()" class="btn btn-primary">
+                        <button id="btn-reload-settings" class="btn btn-primary">
                             再試行
                         </button>
                     </div>
