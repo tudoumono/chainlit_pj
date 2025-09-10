@@ -20,6 +20,33 @@ class SettingsManager {
                 this.runSystemHealthCheck();
             });
         }
+
+        // ログフォルダを開く
+        const openLogBtn = document.getElementById('open-log-folder-btn');
+        if (openLogBtn) {
+            openLogBtn.addEventListener('click', async () => {
+                try {
+                    await window.electronAPI.app.openLogFolder();
+                    this.showToast('ログフォルダを開きました');
+                } catch (e) {
+                    console.error('Failed to open log folder', e);
+                    this.showToast('ログフォルダを開けませんでした', 'error');
+                }
+            });
+        }
+
+        // チャットを開始（トップレベルでChainlit表示）
+        const startChatBtn = document.getElementById('start-chat-btn');
+        if (startChatBtn) {
+            startChatBtn.addEventListener('click', async () => {
+                try {
+                    await window.electronAPI.app.openChat();
+                } catch (e) {
+                    console.error('Failed to open chat', e);
+                    this.showToast('チャット画面を開けませんでした', 'error');
+                }
+            });
+        }
     }
     
     async loadSettings() {
@@ -52,7 +79,7 @@ class SettingsManager {
             this.isLoaded = true;
             
             console.log('✅ Settings loaded');
-            
+
         } catch (error) {
             console.error('❌ Error loading settings:', error);
             this.renderError('設定の読み込みに失敗しました: ' + error.message);
@@ -118,6 +145,15 @@ class SettingsManager {
         `;
         
         this.setupSettingsEventListeners();
+    }
+
+    showToast(message, type = 'info') {
+        if (window.Notifications) {
+            window.Notifications.show(message, type);
+        } else {
+            // 簡易フォールバック
+            alert(message);
+        }
     }
     
     renderSystemInfo() {
@@ -497,7 +533,13 @@ class SettingsManager {
 }
 
 // 設定マネージャー初期化
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     window.SettingsManager = new SettingsManager();
     console.log('✅ Settings Manager initialized');
+    // 初期表示で設定パネルの中身を確実に描画
+    try {
+        await window.SettingsManager.loadSettings();
+    } catch (e) {
+        console.error('❌ Failed to load initial settings:', e);
+    }
 });

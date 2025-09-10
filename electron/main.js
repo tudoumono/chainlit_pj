@@ -4,11 +4,53 @@
  * Context7のElectronドキュメントベストプラクティスに準拠
  */
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
+
+// セキュリティ・互換性調整（ready 前に設定）
+try {
+    // 1) 埋め込み時の認証維持のため、第三者Cookie/SameSite強制を無効化
+    app.commandLine.appendSwitch(
+        'disable-features',
+        'BlockThirdPartyCookies,SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure'
+    );
+    // 2) 一部環境（WSL/VM 等）のGPU初期化エラー回避
+    app.disableHardwareAcceleration();
+} catch {}
+const log = require('electron-log');
+
+function getLogDir() {
+    // ワーキングフォルダ直下に Log/ を作成して使用（env LOG_DIR があれば優先）
+    return process.env.LOG_DIR || path.join(process.cwd(), 'Log');
+}
+
+function ensureLogDir() {
+    const dir = getLogDir();
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    return dir;
+}
+
+function setupMainLogger() {
+    const dir = ensureLogDir();
+    const mainLogPath = path.join(dir, 'main.log');
+    // electron-log 設定
+    // electron-log API変更への対応（resolvePathFn を使用）
+    if (log.transports.file.resolvePathFn) {
+        log.transports.file.resolvePathFn = () => mainLogPath;
+    } else {
+        // 後方互換
+        // @ts-ignore
+        log.transports.file.resolvePath = () => mainLogPath;
+    }
+    const level = (process.env.LOG_LEVEL_MAIN || 'info').toLowerCase();
+    log.transports.console.level = process.env.LOG_ENABLE_CONSOLE === 'false' ? false : level;
+    log.transports.file.level = process.env.LOG_ENABLE_FILE === 'false' ? false : level;
+    log.info('Logger initialized', { mainLogPath });
+    return { dir, mainLogPath };
+}
 
 // 環境ファイルの配置方針（Option B想定）
 // - 開発時: リポジトリ直下の `.env` を使用
@@ -121,6 +163,23 @@ class ChainlitIntegratedManager {
 
     async startChainlit() {
         if (this.chainlitProcess) return true;
+        // ALWAYS_SPAWN=true の場合は検出スキップ
+        if (process.env.ALWAYS_SPAWN === 'true') {
+            console.log('⚙️ ALWAYS_SPAWN=true: forcing Chainlit spawn');
+        } else {
+            // すでに外部で起動している場合は起動をスキップ
+            try {
+                await axios.get(this.chainlitUrl, { timeout: 1000 });
+                console.log('ℹ️ Detected existing Chainlit server; skip spawn');
+                return true;
+            } catch {}
+        }
+        // すでに外部で起動している場合は起動をスキップ
+        try {
+            await axios.get(this.chainlitUrl, { timeout: 1000 });
+            console.log('ℹ️ Detected existing Chainlit server; skip spawn');
+            return true;
+        } catch {}
         const { baseDir, pythonDist } = this.getPaths();
         console.log('🚀 Chainlit サーバーを起動中...');
         let command;
@@ -139,6 +198,14 @@ class ChainlitIntegratedManager {
             env: this.buildPythonEnv()
         });
         this.pythonProcess = this.chainlitProcess; // for backward compat on shutdown
+        // ログ出力
+        try {
+            const dir = ensureLogDir();
+            const out = fs.createWriteStream(path.join(dir, 'chainlit.out.log'), { flags: 'a' });
+            const err = fs.createWriteStream(path.join(dir, 'chainlit.err.log'), { flags: 'a' });
+            this.chainlitProcess.stdout.pipe(out);
+            this.chainlitProcess.stderr.pipe(err);
+        } catch {}
         this.chainlitProcess.stdout.on('data', (d) => console.log('🐍 Chainlit:', d.toString()));
         this.chainlitProcess.stderr.on('data', (d) => console.error('🔴 Chainlit:', d.toString()));
         this.chainlitProcess.on('close', (code) => console.log(`🛑 Chainlit exited: ${code}`));
@@ -147,6 +214,16 @@ class ChainlitIntegratedManager {
 
     async startElectronAPI() {
         if (this.apiProcess) return true;
+        if (process.env.ALWAYS_SPAWN === 'true') {
+            console.log('⚙️ ALWAYS_SPAWN=true: forcing Electron API spawn');
+        } else {
+            // すでに外部で起動している場合は起動をスキップ
+            try {
+                await axios.get(`${this.electronApiUrl}/api/health`, { timeout: 1000 });
+                console.log('ℹ️ Detected existing Electron API server; skip spawn');
+                return true;
+            } catch {}
+        }
         const { baseDir, pythonDist } = this.getPaths();
         console.log('📡 Electron API サーバーを起動中...');
         let command;
@@ -164,6 +241,14 @@ class ChainlitIntegratedManager {
             cwd,
             env: this.buildPythonEnv()
         });
+        // ログ出力
+        try {
+            const dir = ensureLogDir();
+            const out = fs.createWriteStream(path.join(dir, 'electron-api.out.log'), { flags: 'a' });
+            const err = fs.createWriteStream(path.join(dir, 'electron-api.err.log'), { flags: 'a' });
+            this.apiProcess.stdout.pipe(out);
+            this.apiProcess.stderr.pipe(err);
+        } catch {}
         this.apiProcess.stdout.on('data', (d) => console.log('📡 Electron API:', d.toString()));
         this.apiProcess.stderr.on('data', (d) => console.error('🔴 Electron API:', d.toString()));
         this.apiProcess.on('close', (code) => console.log(`🛑 Electron API exited: ${code}`));
@@ -263,17 +348,14 @@ class ChainlitIntegratedManager {
             titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default'
         });
 
-        // タブ付きレンダラーページをロード
+        // 初期は設定画面（自前UI）をロード
         this.mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
         // ready-to-showイベント: 視覚的なフラッシュを防ぐ
         this.mainWindow.once('ready-to-show', () => {
             this.mainWindow.show();
             
-            // 開発時のみDevToolsを開く
-            if (!app.isPackaged) {
-                this.mainWindow.webContents.openDevTools();
-            }
+            // 開発時のDevTools自動オープンは無効化（必要なら手動で開く）
         });
 
         // ウィンドウが閉じられた時の処理
@@ -293,6 +375,10 @@ app.whenReady().then(async () => {
     try {
         console.log('🚀 Electronアプリケーション起動');
 
+        // ロガー初期化
+        const { dir: logDir } = setupMainLogger();
+        console.log('📁 Log directory:', logDir);
+
         // 共有 .env の用意（ユーザーが編集可能な場所）
         const dotenvPath = ensureUserEnvFile();
         if (dotenvPath) {
@@ -304,6 +390,36 @@ app.whenReady().then(async () => {
         
         // メインウィンドウ作成
         chainlitManager.createMainWindow();
+
+        // アプリメニュー（設定に戻る）
+        const template = [
+            {
+                label: 'アプリ',
+                submenu: [
+                    {
+                        label: '設定に戻る',
+                        click: () => {
+                            if (chainlitManager.mainWindow) {
+                                chainlitManager.mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+                            }
+                        }
+                    },
+                    { type: 'separator' },
+                    { role: 'quit', label: '終了' }
+                ]
+            },
+            // 開発メニュー（パッケージ時は非表示）
+            ...(!app.isPackaged ? [{
+                label: '開発',
+                submenu: [
+                    { role: 'reload', label: '再読み込み' },
+                    { role: 'forceReload', label: '強制再読み込み' },
+                    { role: 'toggleDevTools', label: '開発者ツール' }
+                ]
+            }] : [])
+        ];
+        const menu = Menu.buildFromTemplate(template);
+        Menu.setApplicationMenu(menu);
         
     } catch (error) {
         console.error('❌ アプリケーションの起動に失敗:', error);
@@ -385,6 +501,23 @@ ipcMain.handle('stop-electron-api', async () => {
     return { success: true };
 });
 
+// 画面遷移（IPC）
+ipcMain.handle('open-chat', async () => {
+    if (chainlitManager.mainWindow) {
+        await chainlitManager.mainWindow.loadURL(chainlitManager.chainlitUrl);
+        return { success: true };
+    }
+    return { success: false, error: 'No main window' };
+});
+
+ipcMain.handle('return-to-settings', async () => {
+    if (chainlitManager.mainWindow) {
+        await chainlitManager.mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+        return { success: true };
+    }
+    return { success: false, error: 'No main window' };
+});
+
 // Chainlit URL取得
 ipcMain.handle('get-chainlit-url', () => {
     return chainlitManager.chainlitUrl;
@@ -399,7 +532,8 @@ ipcMain.handle('get-system-info', () => {
         electronVersion: process.versions.electron,
         nodeVersion: process.versions.node,
         isPackaged: app.isPackaged,
-        dotenvPath: process.env.DOTENV_PATH || null
+        dotenvPath: process.env.DOTENV_PATH || null,
+        logDir: getLogDir()
     };
 });
 
@@ -429,6 +563,12 @@ ipcMain.handle('window-close', () => {
     if (chainlitManager.mainWindow) {
         chainlitManager.mainWindow.close();
     }
+});
+
+// フォルダオープン
+ipcMain.handle('open-log-folder', async () => {
+    const dir = ensureLogDir();
+    return await shell.openPath(dir);
 });
 
 console.log('📱 Electron Main Process initialized');

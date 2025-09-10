@@ -215,6 +215,53 @@ body {
     box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
 }
 
+/* 強調CTA: チャット開始ボタン */
+#start-chat-btn {
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #1e90ff 0%, #007bff 100%);
+    border: none;
+    box-shadow: 0 8px 20px rgba(0, 123, 255, 0.35);
+    letter-spacing: 0.2px;
+    transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+#start-chat-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px rgba(0, 123, 255, 0.45);
+    filter: brightness(1.03);
+}
+
+#start-chat-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.35);
+}
+
+/*  subtle pulse to draw attention */
+@keyframes ctaPulse {
+    0% { box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.45); }
+    70% { box-shadow: 0 0 0 12px rgba(0, 123, 255, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 123, 255, 0); }
+}
+
+#start-chat-btn.cta-pulse {
+    animation: ctaPulse 2.2s ease-in-out infinite;
+}
+
+/* レイアウト調整（設定ヘッダー内で目立たせる） */
+.panel-header #start-chat-btn {
+    margin-left: 0.75rem;
+}
+
+@media (max-width: 768px) {
+    .panel-header #start-chat-btn {
+        width: 100%;
+        margin-left: 0;
+    }
+}
+
 .btn-secondary {
     background: #6c757d;
     color: white;

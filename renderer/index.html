@@ -11,7 +11,8 @@
                    script-src 'self' 'unsafe-inline'; 
                    style-src 'self' 'unsafe-inline'; 
                    img-src 'self' data: https:; 
-                   connect-src 'self' http://localhost:8000 http://localhost:8001;">
+                   connect-src 'self' http://localhost:8000 http://localhost:8001; 
+                   frame-src 'self' http://localhost:8000;">
     
     <!-- スタイルシート -->
     <link rel="stylesheet" href="css/main.css">
@@ -46,10 +47,6 @@
         <div class="tab-container">
             <!-- タブヘッダー -->
             <div class="tab-header">
-                <button class="tab-button active" data-tab="chat">
-                    <span class="tab-icon">💬</span>
-                    <span class="tab-text">チャット</span>
-                </button>
                 <button class="tab-button" data-tab="personas">
                     <span class="tab-icon">👤</span>
                     <span class="tab-text">ペルソナ管理</span>
@@ -62,7 +59,7 @@
                     <span class="tab-icon">📊</span>
                     <span class="tab-text">分析</span>
                 </button>
-                <button class="tab-button" data-tab="settings">
+                <button class="tab-button active" data-tab="settings">
                     <span class="tab-icon">⚙️</span>
                     <span class="tab-text">設定</span>
                 </button>
@@ -70,17 +67,6 @@
 
             <!-- タブコンテンツ -->
             <div class="tab-content">
-                <!-- チャットタブ（ChainlitのWebView） -->
-                <div id="chat" class="tab-pane active">
-                    <div class="chainlit-container">
-                        <iframe id="chainlit-frame" 
-                                class="chainlit-frame" 
-                                src="" 
-                                title="Chainlit Chat Interface">
-                        </iframe>
-                    </div>
-                </div>
-
                 <!-- ペルソナ管理タブ -->
                 <div id="personas" class="tab-pane">
                     <div class="management-panel">
@@ -134,12 +120,18 @@
                 </div>
 
                 <!-- 設定タブ -->
-                <div id="settings" class="tab-pane">
+                <div id="settings" class="tab-pane active">
                     <div class="management-panel">
                         <div class="panel-header">
                             <h2>システム設定</h2>
                             <button id="system-health-btn" class="btn btn-secondary">
                                 🔍 システムヘルスチェック
+                            </button>
+                            <button id="open-log-folder-btn" class="btn btn-secondary">
+                                📁 ログフォルダを開く
+                            </button>
+                            <button id="start-chat-btn" class="btn btn-primary cta-pulse">
+                                🚀 チャットを開始
                             </button>
                         </div>
                         <div id="settings-panel" class="content-area">
@@ -185,11 +177,12 @@
 
     <!-- JavaScriptファイル -->
     <script src="js/app.js"></script>
+    <!-- 初期化順を安定化: Settings を先に読み込み、続いて Tabs を初期化 -->
+    <script src="js/settings.js"></script>
     <script src="js/tabs.js"></script>
     <script src="js/personas.js"></script>
     <script src="js/vectorstores.js"></script>
     <script src="js/analytics.js"></script>
-    <script src="js/settings.js"></script>
     <script src="js/modal.js"></script>
     <script src="js/notifications.js"></script>
 </body>

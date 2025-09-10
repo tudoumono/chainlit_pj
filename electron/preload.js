@@ -76,7 +76,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         maximize: () => ipcRenderer.invoke('window-maximize'),
         close: () => ipcRenderer.invoke('window-close'),
         startChainlit: () => ipcRenderer.invoke('start-chainlit'),
-        startElectronAPI: () => ipcRenderer.invoke('start-electron-api')
+        startElectronAPI: () => ipcRenderer.invoke('start-electron-api'),
+        openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
+        openChat: () => ipcRenderer.invoke('open-chat'),
+        returnToSettings: () => ipcRenderer.invoke('return-to-settings')
     },
     
     // 通知API

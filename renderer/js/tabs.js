@@ -5,17 +5,24 @@
 
 class TabManager {
     constructor() {
-        this.activeTab = 'chat';
+        this.activeTab = 'settings';
         this.tabButtons = new Map();
         this.tabPanes = new Map();
-        this.loadedTabs = new Set(['chat']); // チャットタブは最初から読み込み済み
+        this.loadedTabs = new Set();
         
         this.init();
     }
     
-    init() {
+    async init() {
         this.setupTabElements();
         this.setupEventListeners();
+        // 初期タブ（settings）の内容を読み込んでから表示
+        try {
+            await this.loadTabContent(this.activeTab);
+            this.loadedTabs.add(this.activeTab);
+        } catch (e) {
+            console.warn('Failed to load initial tab content:', e);
+        }
         this.showActiveTab();
         
         console.log('✅ Tab Manager initialized');
@@ -50,11 +57,10 @@ class TabManager {
         document.addEventListener('keydown', (event) => {
             if (event.ctrlKey || event.metaKey) {
                 const keyMap = {
-                    '1': 'chat',
+                    '1': 'settings',
                     '2': 'personas',
                     '3': 'vectorstores',
-                    '4': 'analytics',
-                    '5': 'settings'
+                    '4': 'analytics'
                 };
                 
                 const tabId = keyMap[event.key];
@@ -129,9 +135,7 @@ class TabManager {
                 }
                 break;
                 
-            case 'chat':
             default:
-                // チャットタブは常に読み込み済み
                 break;
         }
     }

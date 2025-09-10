@@ -233,7 +233,7 @@ python3 -c "import app; print('Import successful')"
 ```
 chainlit_pj/
 ├── app.py                    # メインアプリケーション (440行)
-├── app_backup.py             # リファクタリング前バックアップ (2,468行)
+├── docs/archive/app_backup.py # リファクタリング前バックアップ（退避済み）
 ├── run.py                    # 起動スクリプト
 ├── auth.py                   # 認証ハンドラー
 ├── data_layer.py             # SQLiteデータレイヤー

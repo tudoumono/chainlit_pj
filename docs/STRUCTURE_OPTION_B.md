@@ -36,6 +36,12 @@ root/
 - electron-builder で `.env.example` を `resources` に同梱済（package.json の build.files を更新）。
 - IPC で `get-system-info` から `dotenvPath` を返却（UI表示や診断用）。
 
+## UI方針（単一ウィンドウ + トップレベル表示）
+- 起動時は設定画面（自前UI）を表示し、ボタン操作でチャット開始
+- チャットはBrowserWindowのトップレベルに `http://localhost:<CHAINLIT_PORT>` を表示（iframe非使用）
+- 設定に戻る操作で設定画面に復帰（同一ウィンドウ切替）
+- 認証は第一者Cookieとなり安定（iframeでの第三者Cookie制限を回避）
+
 ## 将来のディレクトリ再編（任意）
 - `desktop/` 以下に `electron/` と `renderer/` を移動
 - `backend/` 以下に Python モジュールを移動
