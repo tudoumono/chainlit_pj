@@ -1,44 +1,45 @@
-# Windows Packaging Guide (Option B)
+# Windows パッケージングガイド（Option B）
 
-This document describes how to build the Windows distributable with embedded Python (`python_dist/`) and Electron.
+本書は、埋め込み Python（`python_dist/`）と Electron を用いた Windows 向け配布物の作成手順をまとめたものです。
 
-Important: Perform Windows-specific steps on a Windows machine after cloning the repository.
+重要: Windows 固有の作業は、Windows マシン上でリポジトリをクローンしてから実施してください。
 
-## Overview
-- Python backend is spawned by Electron Main.
-- Ports are configurable via `.env`: `CHAINLIT_PORT` (default 8000) and `ELECTRON_API_PORT` (default 8001).
-- Logs are written under `<UserData>/logs` and exposed in the UI.
+## 概要
+- Python バックエンドは Electron Main から spawn されます。
+- ポートは `.env` で設定可能です（`CHAINLIT_PORT` 既定 8000、`ELECTRON_API_PORT` 既定 8001）。
+- ログは `<UserData>/logs` に保存され、UI から閲覧できます。
 
-## Prerequisites (Windows)
-- Node.js 18+ (x64)
-- Python 3.10+ (for development); for distribution use the embeddable package
-- Git, 7-Zip or PowerShell (for extracting archives)
+## 前提条件（Windows）
+- Node.js 18 以上（x64）
+- Python 3.10 以上（開発用）。配布では埋め込みパッケージを使用
+- Git、7-Zip または PowerShell（アーカイブ展開用）
 
-## Steps
-1. Clone the repository
+## 手順
+1. リポジトリの取得
    - `git clone <your repo>`
    - `cd chainlit_pj`
-2. Install dependencies (dev)
+2. 依存関係のインストール（開発）
    - `npm i`
-   - `uv pip install -r requirements.in` (or `pip install -r requirements.in`)
-3. Prepare `.env`
-   - Copy `.env.example` to `.env`
-   - Set `OPENAI_API_KEY`, `CHAINLIT_AUTH_SECRET`, `DEFAULT_MODEL`, and optionally the ports `CHAINLIT_PORT`, `ELECTRON_API_PORT`.
-4. Create `python_dist/` (embedded Python)
-   - See `scripts/build_python_dist.ps1` and run it in PowerShell.
-   - It creates `python_dist/` with `python.exe` and required site-packages.
-5. Package
-   - `npm run build:win` (electron-builder)
-   - Output artifacts in `dist/`
+   - `uv pip install -r requirements.in`（または `pip install -r requirements.in`）
+3. `.env` の準備
+   - `.env.example` を `.env` にコピー
+   - `OPENAI_API_KEY`、`CHAINLIT_AUTH_SECRET`、`DEFAULT_MODEL` を設定
+   - 必要に応じて `CHAINLIT_PORT`、`ELECTRON_API_PORT` も調整
+4. `python_dist/` の作成（埋め込み Python）
+   - PowerShell で `scripts/build_python_dist.ps1` を実行
+   - `python_dist/` に `python.exe` と必要な site-packages が配置されます
+5. パッケージ作成
+   - `npm run build:win`（electron-builder）
+   - 生成物は `dist/` に出力されます
 
-## Verification
-- Run the packaged app and confirm:
-  - First launch generates `<UserData>/.env` if absent
-  - Settings tab loads; “Open Chat” navigates to Chainlit (top-level)
-  - Logs available via “Open Log Folder” and “System Logs”
-  - Health check shows both servers healthy
+## 検証項目
+- パッケージ実行時に以下を確認:
+  - 初回起動で `<UserData>/.env` が生成（未存在の場合）
+  - 設定タブが表示され、「チャットを開始」でトップレベルに Chainlit 表示
+  - 「ログフォルダを開く」「システムログ」でログが確認できる
+  - ヘルスチェックで両サーバー（Chainlit/Electron API）が healthy
 
-## Troubleshooting
-- Port conflicts → adjust ports in `.env` and retry
-- Missing packages → run `uv pip install -r requirements.in` and repackage
-- OpenAI errors → verify API key and default model
+## トラブルシュート
+- ポート競合 → `.env` のポートを変更して再試行
+- 依存不足 → `uv pip install -r requirements.in` を実行して再パッケージ
+- OpenAI エラー → API キーと既定モデルを確認
