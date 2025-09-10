@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
             ipcRenderer.invoke('electron-api', '/api/vectorstores', 'POST', data),
         get: (vectorStoreId) => 
             ipcRenderer.invoke('electron-api', `/api/vectorstores/${vectorStoreId}`, 'GET'),
+        rename: (vectorStoreId, name) =>
+            ipcRenderer.invoke('electron-api', `/api/vectorstores/${vectorStoreId}`, 'PATCH', { name }),
         upload: (vectorStoreId, fileData) =>
             ipcRenderer.invoke('electron-api', `/api/vectorstores/${vectorStoreId}/upload`, 'POST', fileData),
         delete: (vectorStoreId) =>

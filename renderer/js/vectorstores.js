@@ -159,6 +159,10 @@ class VectorStoreManager {
                                 class="btn btn-secondary btn-sm">
                             📁 ファイル一覧
                         </button>
+                        <button onclick="window.VectorStoreManager.renameVectorStore('${vectorStore.id}')" 
+                                class="btn btn-secondary btn-sm">
+                            ✏️ 名前を変更
+                        </button>
                         <button onclick="window.VectorStoreManager.uploadFiles('${vectorStore.id}')" 
                                 class="btn btn-primary btn-sm">
                             📤 アップロード
@@ -171,6 +175,50 @@ class VectorStoreManager {
                 </div>
             </div>
         `;
+    }
+
+    renameVectorStore(vectorStoreId, currentName = '') {
+        const vs = this.vectorStores.find(v => v.id === vectorStoreId);
+        const nameForInput = (vs && typeof vs.name === 'string') ? vs.name : currentName;
+        const modalHtml = `
+            <form id="rename-vs-form" onsubmit="window.VectorStoreManager.handleRenameSubmit(event, '${vectorStoreId}')">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="new-vs-name">新しい名前 *</label>
+                    <input type="text" id="new-vs-name" name="name" class="form-input"
+                           style="width: 100%; margin-top: 0.25rem;" required
+                           value="${this.escapeHtml(nameForInput || '')}" maxlength="120">
+                </div>
+                <div class="alert alert-info" style="margin-top: 1rem;">
+                    <small>この操作はOpenAIのベクトルストア名も更新します。</small>
+                </div>
+            </form>
+        `;
+        window.Modal.show('ベクトルストア名の変更', modalHtml, {
+            confirmText: '保存',
+            confirmClass: 'btn-success'
+        });
+        // 入力にフォーカス
+        setTimeout(() => { document.getElementById('new-vs-name')?.focus(); }, 0);
+    }
+
+    async handleRenameSubmit(event, vectorStoreId) {
+        event.preventDefault();
+        try {
+            const formData = new FormData(event.target);
+            const newName = String(formData.get('name') || '').trim();
+            if (!newName) throw new Error('名前を入力してください');
+
+            const res = await window.electronAPI.vectorStore.rename(vectorStoreId, newName);
+            if (!res || !res.success) {
+                throw new Error(res?.error || '名前の更新に失敗しました');
+            }
+            window.Modal.hide();
+            await this.reloadVectorStores();
+            window.NotificationManager?.success('成功', 'ベクトルストア名を更新しました');
+        } catch (err) {
+            console.error('❌ Error renaming vector store:', err);
+            window.NotificationManager?.error('エラー', 'ベクトルストア名の更新に失敗しました: ' + err.message);
+        }
     }
     
     renderError(message) {

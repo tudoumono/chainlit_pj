@@ -156,6 +156,50 @@ class ChainlitIntegratedManager {
         this.mainWindow = null;
     }
 
+    async ensurePythonDeps() {
+        /**
+         * 必要Python依存の事前確認（tenacityの有無チェック）。
+         * ない場合は uv で追加インストールを試行します。
+         * ネットワークが無い/失敗時は黙って続行（アプリはフォールバックで動作）。
+         */
+        if (process.env.SKIP_PY_DEPS_CHECK === 'true') return;
+        return new Promise((resolve) => {
+            try {
+                const { spawn } = require('child_process');
+                const check = spawn('uv', ['run', 'python', '-c', 'import tenacity; print("ok")'], {
+                    cwd: this.getPaths().pythonBackendDir,
+                    env: this.buildPythonEnv(),
+                    stdio: ['ignore', 'pipe', 'pipe']
+                });
+                let output = '';
+                check.stdout.on('data', (d) => { output += d.toString(); });
+                check.on('close', (code) => {
+                    if (code === 0 && output.includes('ok')) {
+                        resolve();
+                        return;
+                    }
+                    // 無ければ最小限でインストール（requirements.in 全体より速い）
+                    const install = spawn('uv', ['pip', 'install', 'tenacity>=9.0.0'], {
+                        cwd: this.getPaths().pythonBackendDir,
+                        env: this.buildPythonEnv(),
+                        stdio: ['ignore', 'pipe', 'pipe']
+                    });
+                    // タイムアウト保険（30秒）
+                    const timer = setTimeout(() => {
+                        try { install.kill('SIGTERM'); } catch {}
+                        resolve();
+                    }, 30000);
+                    install.on('close', () => {
+                        clearTimeout(timer);
+                        resolve();
+                    });
+                });
+            } catch {
+                resolve();
+            }
+        });
+    }
+
     getPaths() {
         const baseDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
         const pythonBackendDir = app.isPackaged
@@ -287,6 +331,7 @@ class ChainlitIntegratedManager {
     }
 
     async start() {
+        await this.ensurePythonDeps();
         await this.startChainlit();
         await this.startElectronAPI();
         await this.waitForServers();

@@ -29,9 +29,11 @@ except Exception as e:
     print(f"Warning: persona_handler not available: {e}")
 
 try:
-    # analytics_handler_instance は未定義のため読み込みをスキップ
-    # from handlers.analytics_handler import analytics_handler_instance
-    pass
+    # Electron APIではanalytics.dbを直接参照して集計するため、
+    # handlers.analytics_handler への依存は必須ではない。
+    # 将来的な拡張に備えて読み込みを試みるが、失敗しても続行する。
+    from handlers.analytics_handler import analytics_handler  # type: ignore
+    analytics_handler_instance = analytics_handler
 except Exception as e:
     print(f"Warning: analytics_handler not available: {e}")
 
@@ -324,6 +326,23 @@ def get_db_connection():
             app_logger.error(f"データベース接続エラー: {e}")
         raise HTTPException(status_code=500, detail=f"Database connection error: {e}")
 
+# analytics.db 接続（存在しない場合はNoneを返すラッパ）
+def get_analytics_db_connection():
+    path = os.path.join('.chainlit', 'analytics.db')
+    if not os.path.exists(path):
+        return None
+    try:
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception as e:
+        try:
+            if app_logger:
+                app_logger.error(f"analytics.db接続エラー: {e}")
+        except Exception:
+            pass
+        return None
+
 # ヘルスチェックエンドポイント
 @app.get("/api/health")
 async def health_check():
@@ -605,6 +624,36 @@ async def create_vector_store(req: CreateVectorStoreRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class UpdateVectorStoreRequest(BaseModel):
+    name: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@app.patch("/api/vectorstores/{vector_store_id}")
+async def update_vector_store(vector_store_id: str, req: UpdateVectorStoreRequest):
+    """ベクトルストアの更新（主に表示名変更）。"""
+    try:
+        if not _ensure_vector_store_ready():
+            raise HTTPException(status_code=503, detail="Vector store handler is not initialized")
+
+        # 現状は名前変更の対応を優先
+        ok = True
+        if req.name:
+            ok = await vector_store_handler.rename_vector_store(vector_store_id, req.name)
+        # メタデータ更新が必要なら今後ここで対応
+        if not ok:
+            raise HTTPException(status_code=500, detail="Failed to update vector store")
+
+        info = await vector_store_handler.get_vector_store_info(vector_store_id)
+        if not info:
+            raise HTTPException(status_code=404, detail="Vector store not found")
+        return {"status": "success", "data": info}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/vectorstores/{vector_store_id}")
 async def get_vector_store(vector_store_id: str):
     """ベクトルストア詳細+ファイル一覧"""
@@ -713,70 +762,226 @@ async def get_analytics_dashboard(user_id: str):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # スレッド統計
-        cursor.execute("""
-            SELECT COUNT(*) as thread_count, 
-                   DATE(created_at) as date
-            FROM threads 
-            WHERE user_id = ? OR user_identifier = ?
-            GROUP BY DATE(created_at)
-            ORDER BY date DESC
-            LIMIT 30
-        """, (user_id, user_id))
-        thread_stats = [dict(row) for row in cursor.fetchall()]
-        
-        # メッセージ統計
-        cursor.execute("""
-            SELECT COUNT(*) as message_count,
-                   DATE(s.created_at) as date
+
+        # 概要合計
+        cursor.execute(
+            "SELECT COUNT(*) as cnt FROM threads WHERE user_id = ? OR user_identifier = ?",
+            (user_id, user_id),
+        )
+        total_chats = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            SELECT COUNT(s.id) as cnt
             FROM steps s
             JOIN threads t ON s.thread_id = t.id
-            WHERE (t.user_id = ? OR t.user_identifier = ?) AND s.type = 'assistant_message'
-            GROUP BY DATE(s.created_at)
-            ORDER BY date DESC
-            LIMIT 30
-        """, (user_id, user_id))
-        message_stats = [dict(row) for row in cursor.fetchall()]
-        
+            WHERE (t.user_id = ? OR t.user_identifier = ?)
+            """,
+            (user_id, user_id),
+        )
+        total_messages = cursor.fetchone()[0]
+
+        # personas / vector stores は存在しない場合を考慮
+        total_personas = 0
+        try:
+            cursor.execute("SELECT COUNT(*) FROM personas")
+            total_personas = cursor.fetchone()[0]
+        except Exception:
+            total_personas = 0
+
+        total_vector_stores = 0
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM user_vector_stores WHERE user_id = ?",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+            total_vector_stores = row[0] if row else 0
+        except Exception:
+            total_vector_stores = 0
+
         conn.close()
-        
+
         return {
-            "status": "success", 
+            "status": "success",
             "data": {
-                "thread_statistics": thread_stats,
-                "message_statistics": message_stats,
-                "generated_at": datetime.now().isoformat()
-            }
+                "total_chats": int(total_chats or 0),
+                "total_messages": int(total_messages or 0),
+                "total_vector_stores": int(total_vector_stores or 0),
+                "total_personas": int(total_personas or 0),
+                "generated_at": datetime.now().isoformat(),
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/analytics/usage/{user_id}")
 async def get_usage_analytics(user_id: str, period: str = "7d"):
-    """使用状況分析取得"""
+    """使用状況分析取得（rendererが期待する形に整形）"""
     try:
+        # 期間
+        days = 7 if period == "7d" else 30 if period == "30d" else 90 if period == "90d" else 30
+
+        # 日別集計（Chainlit DB: stepsベース）
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 期間に応じたクエリ調整
-        days = 7 if period == "7d" else 30 if period == "30d" else 1
-        
-        cursor.execute("""
-            SELECT 
-                COUNT(DISTINCT t.id) as total_threads,
-                COUNT(s.id) as total_messages,
-                AVG(LENGTH(s.output)) as avg_message_length
-            FROM threads t
-            LEFT JOIN steps s ON t.id = s.thread_id
+        cursor.execute(
+            """
+            SELECT DATE(s.created_at) as date, COUNT(*) as cnt
+            FROM steps s
+            JOIN threads t ON s.thread_id = t.id
             WHERE (t.user_id = ? OR t.user_identifier = ?)
-              AND t.created_at >= datetime('now', '-{} days')
-        """.format(days), (user_id, user_id))
-        
-        usage_data = dict(cursor.fetchone())
+              AND s.created_at >= datetime('now', ?)
+            GROUP BY DATE(s.created_at)
+            ORDER BY date ASC
+            """,
+            (user_id, user_id, f"-{days} days"),
+        )
+        daily_rows = cursor.fetchall()
+        daily_usage = [{"date": row[0], "count": row[1]} for row in daily_rows]
+
+        # 直近アクティビティ & 機能別集計（analytics.dbがあれば利用）
+        feature_usage: List[Dict[str, Any]] = []
+        recent_activities: List[Dict[str, Any]] = []
+        aconn = get_analytics_db_connection()
+        if aconn is not None:
+            acur = aconn.cursor()
+            # 機能別集計
+            try:
+                acur.execute(
+                    """
+                    SELECT action as feature_name, COUNT(*) as cnt
+                    FROM user_actions
+                    WHERE timestamp >= datetime('now', ?)
+                      AND user_id = ?
+                    GROUP BY action
+                    ORDER BY cnt DESC
+                    LIMIT 10
+                    """,
+                    (f"-{days} days", user_id),
+                )
+                feature_usage = [
+                    {"feature_name": r[0], "count": r[1]} for r in acur.fetchall()
+                ]
+            except Exception:
+                feature_usage = []
+
+            # 最近のアクティビティ
+            try:
+                acur.execute(
+                    """
+                    SELECT action as type, target as description, timestamp
+                    FROM user_actions
+                    WHERE user_id = ?
+                    ORDER BY timestamp DESC
+                    LIMIT 20
+                    """,
+                    (user_id,),
+                )
+                recent_activities = [
+                    {"type": r[0], "description": r[1], "timestamp": r[2]}
+                    for r in acur.fetchall()
+                ]
+            except Exception:
+                recent_activities = []
+            try:
+                aconn.close()
+            except Exception:
+                pass
+        else:
+            # 代替: analytics.dbが無ければ簡易的に直近のステップをアクティビティとして返す
+            try:
+                cursor.execute(
+                    """
+                    SELECT s.type as type, substr(coalesce(s.output, s.name, 'message'), 1, 40) as description, s.created_at
+                    FROM steps s
+                    JOIN threads t ON s.thread_id = t.id
+                    WHERE (t.user_id = ? OR t.user_identifier = ?)
+                    ORDER BY s.created_at DESC
+                    LIMIT 20
+                    """,
+                    (user_id, user_id),
+                )
+                recent_activities = [
+                    {"type": r[0] or "message", "description": r[1] or "", "timestamp": r[2]}
+                    for r in cursor.fetchall()
+                ]
+            except Exception:
+                recent_activities = []
+
         conn.close()
-        
-        return {"status": "success", "data": usage_data}
+
+        return {
+            "status": "success",
+            "data": {
+                "daily_usage": daily_usage,
+                "feature_usage": feature_usage,
+                "recent_activities": recent_activities,
+            },
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/analytics/export/{user_id}")
+async def export_analytics(user_id: str, format: str = "json"):
+    """分析データをエクスポート（json/csv/簡易pdfテキスト）。"""
+    try:
+        # まず同APIで使用するデータを収集
+        usage_res = await get_usage_analytics(user_id=user_id, period="30d")
+        dash_res = await get_analytics_dashboard(user_id=user_id)
+
+        export_data = {
+            "generated_at": datetime.now().isoformat(),
+            "user_id": user_id,
+            "dashboard": dash_res.get("data", {}),
+            "usage": usage_res.get("data", {}),
+        }
+
+        os.makedirs("exports", exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if format.lower() == "json":
+            filename = f"analytics_{user_id}_{ts}.json"
+            path = os.path.join("exports", filename)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+        elif format.lower() == "csv":
+            # シンプルにdaily_usageをCSV出力
+            filename = f"analytics_daily_{user_id}_{ts}.csv"
+            path = os.path.join("exports", filename)
+            import csv
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["date", "count"]) 
+                for row in export_data.get("usage", {}).get("daily_usage", []):
+                    writer.writerow([row.get("date"), row.get("count", 0)])
+        elif format.lower() == "pdf":
+            # 簡易: テキストを.pdf拡張で保存（本格的なPDF生成は別PRで）
+            filename = f"analytics_report_{user_id}_{ts}.pdf"
+            path = os.path.join("exports", filename)
+            report = [
+                "Analytics Report",
+                f"Generated: {export_data['generated_at']}",
+                f"User: {user_id}",
+                "",
+                "Dashboard Summary:",
+            ]
+            for k, v in export_data.get("dashboard", {}).items():
+                if k == "generated_at":
+                    continue
+                report.append(f"- {k}: {v}")
+            report.append("")
+            report.append("Daily Usage (last 30d):")
+            for row in export_data.get("usage", {}).get("daily_usage", []):
+                report.append(f"- {row.get('date')}: {row.get('count', 0)}")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(report))
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported export format")
+
+        return {"status": "success", "data": {"export_path": path, "filename": filename}}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
