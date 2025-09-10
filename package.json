@@ -55,9 +55,20 @@
       }
     ],
     "extraResources": [
+      { "from": "python_dist", "to": "python_dist" },
       {
-        "from": "python_dist",
-        "to": "python_dist"
+        "from": ".",
+        "to": "python-backend",
+        "filter": [
+          "app.py",
+          "electron_api.py",
+          "handlers/**/*",
+          "utils/**/*",
+          ".chainlit/**/*",
+          "requirements.in",
+          "pyproject.toml",
+          ".env.example"
+        ]
       }
     ],
     "win": {

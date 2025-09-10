@@ -65,14 +65,9 @@ class SettingsManager {
                 this.systemStatus = statusResponse.data;
             }
             
-            // デフォルト設定の読み込み
+            // デフォルト設定（通知/自動保存/言語は固定）
             this.settings = {
-                notifications: true,
-                autoSave: true,
-                theme: 'light',
-                language: 'ja',
-                maxChatHistory: 1000,
-                vectorStoreRetention: 30
+                theme: 'light'
             };
             
             this.renderSettingsPanel();
@@ -92,16 +87,6 @@ class SettingsManager {
         
         container.innerHTML = `
             <div class="content-area">
-                <!-- システム情報セクション -->
-                <div class="settings-section" style="margin-bottom: 2rem;">
-                    <h3>🖥️ システム情報</h3>
-                    <div class="card">
-                        <div class="card-body">
-                            ${this.renderSystemInfo()}
-                        </div>
-                    </div>
-                </div>
-                
                 <!-- 全般設定セクション -->
                 <div class="settings-section" style="margin-bottom: 2rem;">
                     <h3>⚙️ 全般設定</h3>
@@ -157,56 +142,59 @@ class SettingsManager {
     }
     
     renderSystemInfo() {
-        const status = this.systemStatus;
-        
+        const s = this.systemStatus || {};
+        const dash = (v) => (v && String(v).trim() ? v : '—'); // 不要な心配を与えないダッシュ表記
+        const icon = (state) => state === 'healthy' ? '🟢' : state === 'unhealthy' ? '🔴' : '⚪';
+        const cls = (state) => state === 'healthy' ? 'status-green' : state === 'unhealthy' ? 'status-red' : 'status-gray';
+
+        const rows = [];
+        rows.push(`
+            <div class="info-item">
+                <div class="info-label">アプリケーション</div>
+                <div class="info-value">Chainlit AI Workspace v${dash(s.app_version) || '1.0.0'}</div>
+            </div>`);
+        if (dash(s.electron_version) !== '—') rows.push(`
+            <div class="info-item">
+                <div class="info-label">Electron バージョン</div>
+                <div class="info-value">${dash(s.electron_version)}</div>
+            </div>`);
+        if (dash(s.python_version) !== '—') rows.push(`
+            <div class="info-item">
+                <div class="info-label">Python バージョン</div>
+                <div class="info-value">${dash(s.python_version)}</div>
+            </div>`);
+        if (dash(s.chainlit_version) !== '—') rows.push(`
+            <div class="info-item">
+                <div class="info-label">Chainlit バージョン</div>
+                <div class="info-value">${dash(s.chainlit_version)}</div>
+            </div>`);
+
+        rows.push(`
+            <div class="info-item">
+                <div class="info-label">データベース</div>
+                <div class="info-value">
+                    <span class="status-indicator ${cls(s.database_status)}">${icon(s.database_status)}</span>
+                    ${dash(s.database_status)}
+                </div>
+            </div>`);
+        rows.push(`
+            <div class="info-item">
+                <div class="info-label">OpenAI API</div>
+                <div class="info-value">
+                    <span class="status-indicator ${cls(s.openai_status)}">${icon(s.openai_status)}</span>
+                    ${s.openai_status === 'unknown' ? '未設定' : dash(s.openai_status)}
+                </div>
+            </div>`);
+
         return `
             <div class="system-info-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
-                <div class="info-item">
-                    <div class="info-label">アプリケーション</div>
-                    <div class="info-value">Chainlit AI Workspace v1.0.0</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Electron バージョン</div>
-                    <div class="info-value">${status.electron_version || '不明'}</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Python バージョン</div>
-                    <div class="info-value">${status.python_version || '不明'}</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Chainlit バージョン</div>
-                    <div class="info-value">${status.chainlit_version || '不明'}</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">データベース</div>
-                    <div class="info-value">
-                        <span class="status-indicator ${status.database_status === 'healthy' ? 'status-green' : 'status-red'}">
-                            ${status.database_status === 'healthy' ? '🟢' : '🔴'}
-                        </span>
-                        ${status.database_status || '不明'}
-                    </div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">OpenAI API</div>
-                    <div class="info-value">
-                        <span class="status-indicator ${status.openai_status === 'healthy' ? 'status-green' : 'status-red'}">
-                            ${status.openai_status === 'healthy' ? '🟢' : '🔴'}
-                        </span>
-                        ${status.openai_status || '不明'}
-                    </div>
-                </div>
+                ${rows.join('\n')}
             </div>
-            
             <div style="margin-top: 1rem; display: flex; gap: 0.75rem;">
-                <button onclick="window.SettingsManager.runSystemHealthCheck()" class="btn btn-primary">
-                    🔍 ヘルスチェック実行
-                </button>
-                <button onclick="window.SettingsManager.viewSystemLogs()" class="btn btn-secondary">
-                    📜 システムログを表示
-                </button>
-                <button onclick="window.SettingsManager.exportSystemInfo()" class="btn btn-secondary">
-                    📊 システム情報エクスポート
-                </button>
+                <button onclick="window.SettingsManager.refreshSystemStatus()" class="btn btn-secondary">🔄 再取得</button>
+                <button onclick="window.SettingsManager.runSystemHealthCheck()" class="btn btn-primary">🔍 ヘルスチェック実行</button>
+                <button onclick="window.SettingsManager.viewSystemLogs()" class="btn btn-secondary">📜 システムログを表示</button>
+                <button onclick="window.SettingsManager.exportSystemInfo()" class="btn btn-secondary">📊 システム情報エクスポート</button>
             </div>
         `;
     }
@@ -214,21 +202,7 @@ class SettingsManager {
     renderGeneralSettings() {
         return `
             <div class="settings-form">
-                <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label class="settings-label">
-                        <input type="checkbox" id="enable-notifications" ${this.settings.notifications ? 'checked' : ''}>
-                        通知を有効にする
-                    </label>
-                    <small class="settings-help">システム通知とアラートを受け取ります</small>
-                </div>
                 
-                <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label class="settings-label">
-                        <input type="checkbox" id="auto-save" ${this.settings.autoSave ? 'checked' : ''}>
-                        自動保存を有効にする
-                    </label>
-                    <small class="settings-help">設定とデータの自動保存を行います</small>
-                </div>
                 
                 <div class="form-group" style="margin-bottom: 1.5rem;">
                     <label class="settings-label">テーマ</label>
@@ -237,15 +211,10 @@ class SettingsManager {
                         <option value="dark" ${this.settings.theme === 'dark' ? 'selected' : ''}>ダーク</option>
                         <option value="auto" ${this.settings.theme === 'auto' ? 'selected' : ''}>システム設定に従う</option>
                     </select>
+                    <small class="settings-help">表示テーマのみ変更できます。通知は常に有効、表示言語は日本語固定です。</small>
                 </div>
                 
-                <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label class="settings-label">言語</label>
-                    <select id="language-select" class="form-select">
-                        <option value="ja" ${this.settings.language === 'ja' ? 'selected' : ''}>日本語</option>
-                        <option value="en" ${this.settings.language === 'en' ? 'selected' : ''}>English</option>
-                    </select>
-                </div>
+                
                 
                 <div class="settings-actions">
                     <button onclick="window.SettingsManager.saveGeneralSettings()" class="btn btn-primary">
@@ -262,27 +231,7 @@ class SettingsManager {
     renderDataSettings() {
         return `
             <div class="settings-form">
-                <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label class="settings-label">最大チャット履歴保存数</label>
-                    <input type="number" id="max-chat-history" class="form-input" 
-                           value="${this.settings.maxChatHistory}" min="100" max="10000" step="100">
-                    <small class="settings-help">保存するチャット履歴の最大数（100-10000）</small>
-                </div>
-                
-                <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label class="settings-label">ベクトルストア保持期間（日）</label>
-                    <input type="number" id="vectorstore-retention" class="form-input" 
-                           value="${this.settings.vectorStoreRetention}" min="1" max="365">
-                    <small class="settings-help">未使用のベクトルストアを自動削除するまでの日数</small>
-                </div>
-                
                 <div class="data-management-actions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                    <button onclick="window.SettingsManager.backupData()" class="btn btn-success">
-                        💾 データバックアップ
-                    </button>
-                    <button onclick="window.SettingsManager.restoreData()" class="btn btn-warning">
-                        📥 データ復元
-                    </button>
                     <button onclick="window.SettingsManager.cleanupData()" class="btn btn-secondary">
                         🧹 データクリーンアップ
                     </button>
@@ -297,46 +246,13 @@ class SettingsManager {
     renderSecuritySettings() {
         return `
             <div class="settings-form">
-                <div class="security-status" style="margin-bottom: 1.5rem;">
-                    <h4>🔐 セキュリティ状態</h4>
-                    <div class="security-checks">
-                        <div class="security-check-item">
-                            <span class="check-icon">🟢</span>
-                            <span>SSL/TLS証明書</span>
-                            <span class="check-status">有効</span>
-                        </div>
-                        <div class="security-check-item">
-                            <span class="check-icon">🟢</span>
-                            <span>API キー暗号化</span>
-                            <span class="check-status">有効</span>
-                        </div>
-                        <div class="security-check-item">
-                            <span class="check-icon">🟢</span>
-                            <span>セッション管理</span>
-                            <span class="check-status">セキュア</span>
-                        </div>
-                    </div>
-                </div>
-                
                 <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label class="settings-label">OpenAI API キー</label>
-                    <div style="display: flex; gap: 0.5rem;">
-                        <input type="password" id="openai-api-key" class="form-input" 
-                               placeholder="sk-..." style="flex: 1;">
-                        <button onclick="window.SettingsManager.testApiKey()" class="btn btn-secondary">
-                            🔍 テスト
-                        </button>
+                    <label class="settings-label">OpenAI API キー疎通テスト</label>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input type="password" id="openai-api-key" class="form-input" placeholder="sk-...（未入力なら現在のキーを使用）" style="flex: 1;">
+                        <button onclick="window.SettingsManager.testApiKey()" class="btn btn-secondary">🔍 テスト</button>
                     </div>
-                    <small class="settings-help">OpenAI API キーは暗号化されて保存されます</small>
-                </div>
-                
-                <div class="security-actions">
-                    <button onclick="window.SettingsManager.changePassword()" class="btn btn-primary">
-                        🔑 パスワード変更
-                    </button>
-                    <button onclick="window.SettingsManager.clearSessions()" class="btn btn-secondary">
-                        🚪 全セッションをクリア
-                    </button>
+                    <small class="settings-help">テストは最小限のリクエストで行われ、OpenAI側のリソースに変更は加えません。</small>
                 </div>
             </div>
         `;
@@ -345,22 +261,6 @@ class SettingsManager {
     renderAdvancedSettings() {
         return `
             <div class="settings-form">
-                <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label class="settings-label">
-                        <input type="checkbox" id="debug-mode" ${this.settings.debugMode ? 'checked' : ''}>
-                        デバッグモードを有効にする
-                    </label>
-                    <small class="settings-help">詳細なログとデバッグ情報を記録します</small>
-                </div>
-                
-                <div class="form-group" style="margin-bottom: 1.5rem;">
-                    <label class="settings-label">
-                        <input type="checkbox" id="developer-tools" ${this.settings.devTools ? 'checked' : ''}>
-                        開発者ツールを有効にする
-                    </label>
-                    <small class="settings-help">Chrome DevToolsへのアクセスを許可します</small>
-                </div>
-                
                 <div class="advanced-actions" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                     <button onclick="window.SettingsManager.openDevTools()" class="btn btn-secondary">
                         🔧 開発者ツールを開く
@@ -368,11 +268,11 @@ class SettingsManager {
                     <button onclick="window.SettingsManager.restartApplication()" class="btn btn-warning">
                         🔄 アプリケーション再起動
                     </button>
-                    <button onclick="window.SettingsManager.clearCache()" class="btn btn-secondary">
-                        🗑️ キャッシュをクリア
+                    <button onclick="window.SettingsManager.viewSystemLogs()" class="btn btn-secondary">
+                        📜 システムログを表示
                     </button>
-                    <button onclick="window.SettingsManager.factoryReset()" class="btn btn-danger">
-                        ⚠️ 工場出荷時設定
+                    <button onclick="window.SettingsManager.exportSystemInfo()" class="btn btn-secondary">
+                        📊 システム情報エクスポート
                     </button>
                 </div>
             </div>
@@ -398,40 +298,60 @@ class SettingsManager {
     
     setupSettingsEventListeners() {
         // 設定の自動保存
-        const autoSaveElements = [
-            'enable-notifications',
-            'auto-save',
-            'theme-select',
-            'language-select'
-        ];
-        
-        autoSaveElements.forEach(elementId => {
-            const element = document.getElementById(elementId);
-            if (element) {
-                element.addEventListener('change', () => {
-                    if (this.settings.autoSave) {
-                        setTimeout(() => this.saveGeneralSettings(), 500);
-                    }
-                });
-            }
-        });
+        // 自動保存は行わない（ユーザー操作で保存）。必要なイベントだけを設定
+        const themeSelect = document.getElementById('theme-select');
+        if (themeSelect) {
+            themeSelect.addEventListener('change', () => {
+                this.settings.theme = themeSelect.value;
+            });
+        }
     }
     
     async runSystemHealthCheck() {
         try {
             window.NotificationManager.show('開始', 'システムヘルスチェックを実行中...', 'info');
-            
-            const response = await window.electronAPI.system.health();
-            
-            if (!response || !response.success) {
-                throw new Error(response?.error || 'ヘルスチェックに失敗しました');
+
+            const health = {};
+
+            // 1) Electron API 自身
+            try {
+                const statusRes = await window.electronAPI.system.status();
+                if (!statusRes || !statusRes.success) throw new Error(statusRes?.error || 'NG');
+                health['electron_api'] = { status: 'healthy', message: 'APIサーバー応答OK' };
+                // 2) Database（status APIの応答があればOKとみなす）
+                health['database'] = { status: 'healthy', message: `DB応答OK (${statusRes.data?.database_path || 'path不明'})` };
+            } catch (e) {
+                health['electron_api'] = { status: 'unhealthy', message: String(e) };
+                health['database'] = { status: 'unknown', message: 'APIが不安定のため判定不可' };
             }
-            
-            const healthData = response.data;
-            this.showHealthCheckResults(healthData);
-            
+
+            // 3) Chainlit
+            try {
+                const url = await window.electronAPI.getChainlitUrl();
+                const controller = new AbortController();
+                const t = setTimeout(() => controller.abort(), 2000);
+                const r = await fetch(`${url}/health`, { signal: controller.signal });
+                clearTimeout(t);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                health['chainlit'] = { status: 'healthy', message: 'Chainlit応答OK' };
+            } catch (e) {
+                health['chainlit'] = { status: 'unhealthy', message: 'Chainlitに接続できません' };
+            }
+
+            // 4) OpenAI（ユーザー操作で課金が発生する可能性があるため、最小呼び出し）
+            try {
+                const test = await window.electronAPI.callAPI('/api/system/test-openai-key', 'POST', {}, { silent: true });
+                if (test && test.success) {
+                    health['openai'] = { status: 'healthy', message: `model=${test.data?.model}, latency=${test.data?.latency_ms}ms` };
+                } else {
+                    throw new Error(test?.error || '疎通失敗');
+                }
+            } catch (e) {
+                health['openai'] = { status: 'unhealthy', message: 'APIキー未設定または疎通失敗' };
+            }
+
+            this.showHealthCheckResults(health);
             window.NotificationManager.show('完了', 'システムヘルスチェックが完了しました', 'success');
-            
         } catch (error) {
             console.error('❌ Error running health check:', error);
             window.NotificationManager.show('エラー', 'ヘルスチェックに失敗しました: ' + error.message, 'error');
@@ -461,19 +381,28 @@ class SettingsManager {
         });
     }
     
+    async refreshSystemStatus() {
+        try {
+            const res = await window.electronAPI.system.status();
+            if (res && res.success) {
+                this.systemStatus = res.data || {};
+                // 表示を最新化
+                this.renderSettingsPanel();
+            } else {
+                throw new Error(res?.error || '更新に失敗しました');
+            }
+        } catch (e) {
+            window.NotificationManager.error('エラー', String(e));
+        }
+    }
+    
     async saveGeneralSettings() {
         try {
-            const notifications = document.getElementById('enable-notifications')?.checked || false;
-            const autoSave = document.getElementById('auto-save')?.checked || false;
             const theme = document.getElementById('theme-select')?.value || 'light';
-            const language = document.getElementById('language-select')?.value || 'ja';
             
             this.settings = {
                 ...this.settings,
-                notifications,
-                autoSave,
-                theme,
-                language
+                theme
             };
             
             // 設定をローカルストレージに保存
@@ -490,12 +419,7 @@ class SettingsManager {
     resetGeneralSettings() {
         if (confirm('設定をデフォルトに戻しますか？')) {
             this.settings = {
-                notifications: true,
-                autoSave: true,
-                theme: 'light',
-                language: 'ja',
-                maxChatHistory: 1000,
-                vectorStoreRetention: 30
+                theme: 'light'
             };
             
             this.renderSettingsPanel();
@@ -509,19 +433,79 @@ class SettingsManager {
     }
     
     // スタブメソッド（実装は将来の拡張用）
-    async viewSystemLogs() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async exportSystemInfo() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async backupData() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async restoreData() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async cleanupData() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async resetAllData() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async testApiKey() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async changePassword() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async clearSessions() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async openDevTools() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async restartApplication() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async clearCache() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
-    async factoryReset() { window.NotificationManager.show('準備中', 'この機能は準備中です', 'info'); }
+    async viewSystemLogs() {
+        try {
+            const res = await window.electronAPI.system.logs();
+            if (!res || !res.success) throw new Error(res?.error || 'ログの取得に失敗しました');
+            const logs = (res.data?.logs || []).join('');
+            const html = `
+                <div style="max-height: 60vh; overflow: auto; background:#0f172a; color:#e2e8f0; padding: 12px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 12px;">
+                    <pre style="margin:0; white-space: pre-wrap;">${this.escapeHtml(logs)}</pre>
+                </div>`;
+            window.Modal.show('📜 システムログ（最新100行）', html, { showCancel: true, cancelText: '閉じる', showConfirm: false });
+        } catch (e) {
+            window.NotificationManager.error('エラー', String(e));
+        }
+    }
+
+    async exportSystemInfo() {
+        try {
+            const res = await window.electronAPI.callAPI('/api/system/export', 'GET', null, { silent: false });
+            if (!res || !res.success) throw new Error(res?.error || 'エクスポートに失敗しました');
+            window.NotificationManager.success('完了', `システム情報をエクスポートしました: ${res.data?.filename}`);
+        } catch (e) {
+            window.NotificationManager.error('エラー', String(e));
+        }
+    }
+
+    async testApiKey() {
+        try {
+            const key = document.getElementById('openai-api-key')?.value || '';
+            const payload = key ? { api_key: key } : {};
+            const res = await window.electronAPI.callAPI('/api/system/test-openai-key', 'POST', payload, { silent: false });
+            if (!res || !res.success) throw new Error(res?.error || '疎通テストに失敗しました');
+            const m = res.data?.model || 'unknown';
+            const t = res.data?.latency_ms != null ? `${res.data.latency_ms} ms` : 'OK';
+            window.NotificationManager.success('OpenAI 接続OK', `model=${m}, latency=${t}`);
+        } catch (e) {
+            window.NotificationManager.error('OpenAI 接続エラー', String(e));
+        }
+    }
+
+    async cleanupData() {
+        const proceed = confirm('一時ファイル・古いログ・エクスポート/アップロードをクリーンアップします。\n\nOpenAI側のデータには一切影響しません。続行しますか？');
+        if (!proceed) return;
+        try {
+            const res = await window.electronAPI.callAPI('/api/system/cleanup', 'POST', {});
+            if (!res || !res.success) throw new Error(res?.error || 'クリーンアップに失敗しました');
+            const d = res.data || {};
+            window.NotificationManager.success('完了', `削除: ファイル ${d.removed_files || 0}, ディレクトリ ${d.removed_dirs || 0}`);
+        } catch (e) {
+            window.NotificationManager.error('エラー', String(e));
+        }
+    }
+
+    async resetAllData() {
+        try {
+            // プレビュー
+            const preview = await window.electronAPI.callAPI('/api/system/factory-reset', 'POST', { preview: true, confirm: false });
+            const p = preview?.data?.preview || {};
+            const msg = `以下を初期化します（OpenAI API側は変更しません）:\n\n` +
+                        `DB: ${p.db || 0} / 一時: ${p.tmp || 0} / ログ: ${p.logs || 0} / exports: ${p.exports || 0} / uploads: ${p.uploads || 0} / personas: ${p.personas || 0}`;
+            const ok = confirm(msg + '\n\n本当に実行しますか？この操作は取り消せません。');
+            if (!ok) return;
+            const res = await window.electronAPI.callAPI('/api/system/factory-reset', 'POST', { confirm: true });
+            if (!res || !res.success) throw new Error(res?.error || '初期化に失敗しました');
+            window.NotificationManager.success('完了', 'アプリデータを初期化しました。アプリを再起動します。');
+            // 再起動
+            setTimeout(() => { try { window.electronAPI.app.relaunch(); } catch {} }, 1200);
+        } catch (e) {
+            window.NotificationManager.error('エラー', String(e));
+        }
+    }
+
+    async openDevTools() { try { await window.electronAPI.app.toggleDevTools(); } catch (e) { console.error(e); } }
+    async restartApplication() { try { await window.electronAPI.app.relaunch(); } catch (e) { console.error(e); } }
     
     // ユーティリティメソッド
     escapeHtml(text) {

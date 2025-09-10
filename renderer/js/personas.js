@@ -73,10 +73,16 @@ class PersonaManager {
             return;
         }
         
+        const helpBox = `
+            <div class="alert alert-info" style="margin-bottom: 1rem;">
+                <strong>アクティブ化の方法:</strong> ペルソナの有効化はChainlit側で行います。チャット画面で <code>/persona ペルソナ名</code> を実行してください。右上の「🌐 ブラウザで開く」からChainlitを開けます。
+            </div>
+        `;
         const personaCards = this.personas.map(persona => this.renderPersonaCard(persona)).join('');
         
         container.innerHTML = `
             <div class="content-area">
+                ${helpBox}
                 <div class="row" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1rem;">
                     ${personaCards}
                 </div>
@@ -86,7 +92,8 @@ class PersonaManager {
     
     renderPersonaCard(persona) {
         const isActive = persona.is_active ? 'badge-success' : 'badge-secondary';
-        const statusText = persona.is_active ? 'アクティブ' : '無効';
+        const statusText = persona.is_active ? 'アクティブ (Chainlit)'
+                                             : '未アクティブ (Chainlit)';
         
         return `
             <div class="card persona-card" data-persona-id="${persona.id}">
@@ -106,14 +113,10 @@ class PersonaManager {
                     </div>
                 </div>
                 <div class="card-footer">
-                    <div class="btn-group" style="display: flex; gap: 0.5rem;">
+                    <div class="btn-group" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         <button onclick="window.PersonaManager.editPersona('${persona.id}')" 
                                 class="btn btn-secondary btn-sm">
                             ✏️ 編集
-                        </button>
-                        <button onclick="window.PersonaManager.togglePersonaStatus('${persona.id}', ${!persona.is_active})" 
-                                class="btn btn-${persona.is_active ? 'warning' : 'success'} btn-sm">
-                            ${persona.is_active ? '❌ 無効化' : '✅ 有効化'}
                         </button>
                         <button onclick="window.PersonaManager.deletePersona('${persona.id}')" 
                                 class="btn btn-danger btn-sm">
@@ -174,11 +177,8 @@ class PersonaManager {
                     </select>
                 </div>
                 
-                <div class="form-group" style="margin-bottom: 1rem;">
-                    <label>
-                        <input type="checkbox" id="persona-active" name="is_active" checked>
-                        このペルソナをアクティブにする
-                    </label>
+                <div class="alert alert-info" style="margin-top: 1rem;">
+                    <strong>有効化について:</strong> ペルソナのアクティブ切替はChainlit側で行います。作成後、チャット画面で <code>/persona ペルソナ名</code> を実行してください。
                 </div>
             </form>
         `;
@@ -228,11 +228,8 @@ class PersonaManager {
                         </select>
                     </div>
                     
-                    <div class="form-group" style="margin-bottom: 1rem;">
-                        <label>
-                            <input type="checkbox" id="persona-active" name="is_active" ${persona.is_active ? 'checked' : ''}>
-                            このペルソナをアクティブにする
-                        </label>
+                    <div class="alert alert-info" style="margin-top: 1rem;">
+                        <strong>有効化について:</strong> ペルソナのアクティブ切替はChainlit側で行います。編集後、チャット画面で <code>/persona ${this.escapeHtml(persona.name)}</code> を実行してください。
                     </div>
                 </form>
             `;
@@ -257,8 +254,7 @@ class PersonaManager {
                 name: formData.get('name'),
                 description: formData.get('description'),
                 system_prompt: formData.get('system_prompt'),
-                model: formData.get('model'),
-                is_active: formData.has('is_active')
+                model: formData.get('model')
             };
             
             let response;
@@ -286,19 +282,8 @@ class PersonaManager {
     
     async togglePersonaStatus(personaId, newStatus) {
         try {
-            const response = await window.electronAPI.personas.update(personaId, {
-                is_active: newStatus
-            });
-            
-            if (!response || !response.success) {
-                throw new Error('ペルソナステータスの更新に失敗しました');
-            }
-            
-            await this.reloadPersonas();
-            
-            const statusText = newStatus ? '有効化' : '無効化';
-            window.NotificationManager.show('成功', `ペルソナが${statusText}されました`, 'success');
-            
+            // Chainlitに委譲するため、Electron側ではトグルしない
+            window.NotificationManager?.info('ご案内', 'ペルソナの有効化/無効化はChainlitで行ってください。/persona コマンドをご利用ください。');
         } catch (error) {
             console.error('❌ Error toggling persona status:', error);
             window.NotificationManager.show('エラー', 'ペルソナステータスの更新に失敗しました: ' + error.message, 'error');

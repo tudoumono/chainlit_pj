@@ -52,7 +52,10 @@ class ChainlitElectronApp {
             
             this.isInitialized = true;
             console.log('✅ Chainlit Electron App初期化完了');
-            
+
+            // API呼び出しの統一ラッパ（通知＋ログ導線）
+            this.installApiCallWrapper();
+
         } catch (error) {
             console.error('❌ アプリケーション初期化エラー:', error);
             this.showError('アプリケーションの初期化に失敗しました: ' + error.message);
@@ -76,6 +79,50 @@ class ChainlitElectronApp {
         }
         
         throw new Error('Chainlitサーバーへの接続がタイムアウトしました');
+    }
+
+    installApiCallWrapper() {
+        if (!window.electronAPI || !window.electronAPI.callAPI) return;
+        if (window.electronAPI._rawCallAPI) return; // 二重適用防止
+
+        window.electronAPI._rawCallAPI = window.electronAPI.callAPI;
+        window.electronAPI.callAPI = async (endpoint, method = 'GET', data = null, options = { silent: true }) => {
+            try {
+                const res = await window.electronAPI._rawCallAPI(endpoint, method, data);
+                if (!res || !res.success) {
+                    const message = (res && res.error) ? res.error : 'API呼び出しに失敗しました';
+                    // エラートースト（ログを開くボタン付き）
+                    window.NotificationManager?.error('APIエラー', message, {
+                        actions: [
+                            {
+                                id: 'openLogs',
+                                text: '📁 ログを開く',
+                                class: 'btn-secondary'
+                            }
+                        ]
+                    });
+                } else if (!options || !options.silent) {
+                    // 成功時の軽い通知（明示的要求時のみ）
+                    window.NotificationManager?.success('成功', '処理が完了しました');
+                }
+                return res;
+            } catch (e) {
+                window.NotificationManager?.error('APIエラー', String(e), {
+                    actions: [
+                        { id: 'openLogs', text: '📁 ログを開く', class: 'btn-secondary' }
+                    ]
+                });
+                return { success: false, error: String(e) };
+            }
+        };
+
+        // 通知アクション: ログを開く
+        document.addEventListener('notificationAction', (event) => {
+            const { actionId } = event.detail || {};
+            if (actionId === 'openLogs') {
+                try { window.electronAPI.app.openLogFolder(); } catch {}
+            }
+        });
     }
     
     setupEventListeners() {

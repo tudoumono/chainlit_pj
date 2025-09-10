@@ -477,8 +477,39 @@ class VectorStoreHandler:
                 app_logger.warning("⚠️ OpenAIクライアントが初期化されていません")
                 return []
 
-            from .vector_store_api_helper import safe_list_vector_store_files
-            return await safe_list_vector_store_files(self.async_client, vector_store_id)
+            from .vector_store_api_helper import safe_list_vector_store_files, safe_retrieve_file_metadata
+
+            files = await safe_list_vector_store_files(self.async_client, vector_store_id)
+
+            # 追加メタ（filename/bytes）を並行取得
+            async def enrich(f: Dict) -> Dict:
+                fid = f.get("id")
+                if not fid:
+                    return f
+                meta = await safe_retrieve_file_metadata(self.async_client, fid)
+                if meta:
+                    f["filename"] = meta.get("filename") or f.get("filename")
+                    f["bytes"] = meta.get("bytes", f.get("bytes"))
+                    # created_atはfiles.listの値を優先しつつ、無い場合は上書き
+                    if not f.get("created_at") and meta.get("created_at"):
+                        f["created_at"] = meta.get("created_at")
+                return f
+
+            try:
+                # 過度な同時実行を避ける（最大5並列）
+                import asyncio
+
+                semaphore = asyncio.Semaphore(5)
+
+                async def sem_enrich(item):
+                    async with semaphore:
+                        return await enrich(item)
+
+                enriched = await asyncio.gather(*[sem_enrich(f) for f in files])
+                return enriched
+            except Exception as _e:
+                # 失敗時は一覧結果のみ返却
+                return files
             
         except Exception as e:
             app_logger.error("❌ ファイル一覧取得エラー", error=str(e))

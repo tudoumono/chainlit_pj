@@ -80,6 +80,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
         openChat: () => ipcRenderer.invoke('open-chat'),
         openInBrowser: (path = '') => ipcRenderer.invoke('open-in-browser', path),
+        toggleDevTools: () => ipcRenderer.invoke('toggle-devtools'),
+        relaunch: () => ipcRenderer.invoke('app-relaunch'),
         returnToSettings: () => ipcRenderer.invoke('return-to-settings')
     },
     

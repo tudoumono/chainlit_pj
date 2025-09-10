@@ -13,6 +13,8 @@ import json
 import os
 from dotenv import load_dotenv
 from datetime import datetime
+import time
+from openai import AsyncOpenAI
 
 # 既存ハンドラーをインポート（依存ごとに独立して読み込み、片方の失敗で全体を落とさない）
 persona_handler_instance = None
@@ -118,6 +120,193 @@ class PersonaData(BaseModel):
     tags: Optional[str] = ""
     is_active: Optional[bool] = False
 
+class PersonaStatusUpdate(BaseModel):
+    is_active: bool
+
+
+class CleanupResponse(BaseModel):
+    removed_files: int
+    removed_dirs: int
+    details: Dict[str, int]
+
+
+class FactoryResetRequest(BaseModel):
+    confirm: bool = False
+    preview: bool = False
+
+
+def _safe_remove(path: str, counters: Dict[str, int]):
+    try:
+        if os.path.isdir(path):
+            import shutil
+            shutil.rmtree(path, ignore_errors=True)
+            counters['dirs'] += 1
+        elif os.path.isfile(path):
+            os.remove(path)
+            counters['files'] += 1
+    except Exception:
+        pass
+
+
+def _collect_paths_for_cleanup() -> Dict[str, list]:
+    """ローカルの一時/生成物をクリーンアップ対象として収集（OpenAI側は対象外）。"""
+    targets: Dict[str, list] = {
+        'db': [],
+        'tmp': [],
+        'logs': [],
+        'exports': [],
+        'uploads': []
+    }
+    base = os.getcwd()
+    # SQLite DB（ローカルのみ）
+    targets['db'].extend([
+        os.path.join(base, '.chainlit', 'chainlit.db'),
+        os.path.join(base, '.chainlit', 'analytics.db')
+    ])
+    # 一時ファイル/ローカルキャッシュ
+    targets['tmp'].append(os.path.join(base, '.chainlit', 'vector_store_files'))
+    # ログ（Python側既定なし。存在すれば削除）
+    targets['logs'].append(os.path.join(base, 'Log'))
+    # エクスポート/アップロード
+    targets['exports'].append(os.path.join(base, 'exports'))
+    targets['uploads'].append(os.path.join(base, 'uploads'))
+    return targets
+
+
+@app.get('/api/system/export')
+async def export_system_info():
+    """システム情報をJSONでエクスポート（ローカルのみ）。"""
+    try:
+        info = {
+            'timestamp': datetime.now().isoformat(),
+            'cwd': os.getcwd(),
+            'env': {
+                'DOTENV_PATH': os.environ.get('DOTENV_PATH'),
+                'CHAINLIT_CONFIG_PATH': os.environ.get('CHAINLIT_CONFIG_PATH'),
+            }
+        }
+        # 依存/バージョン
+        try:
+            import sys
+            import platform
+            info['runtime'] = {
+                'python': sys.version,
+                'platform': platform.platform(),
+            }
+        except Exception:
+            pass
+
+        export_dir = 'exports'
+        os.makedirs(export_dir, exist_ok=True)
+        filename = f"system_info_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        export_path = os.path.join(export_dir, filename)
+        with open(export_path, 'w', encoding='utf-8') as f:
+            json.dump(info, f, ensure_ascii=False, indent=2)
+
+        return {"status": "success", "data": {"export_path": export_path, "filename": filename}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post('/api/system/test-openai-key')
+async def test_openai_key(request: Dict[str, Any]):
+    """OpenAI APIキー疎通テスト（既存キー使用が基本）。"""
+    try:
+        api_key = (request.get('api_key') or os.getenv('OPENAI_API_KEY') or '').strip()
+        if not api_key or api_key == 'your_api_key_here':
+            raise HTTPException(status_code=400, detail='APIキーが設定されていません')
+
+        # モデルはenv優先、ダメなら安全な既定にフォールバック
+        model_env = (request.get('model') or os.getenv('DEFAULT_MODEL') or '').strip()
+        safe_default = 'gpt-4o-mini'
+        candidate_models = [m for m in [model_env, safe_default] if m]
+
+        client = AsyncOpenAI(api_key=api_key)
+        last_error = None
+        import asyncio
+        for mdl in candidate_models:
+            try:
+                t0 = time.monotonic()
+                # 400回避のため追加パラメータは付けず最小呼び出し
+                resp = await client.responses.create(model=mdl, input='ping')
+                dt_ms = int((time.monotonic() - t0) * 1000)
+                return {"status": "success", "data": {"model": getattr(resp, 'model', mdl), "latency_ms": dt_ms, "ok": True}}
+            except Exception as e:
+                last_error = e
+                await asyncio.sleep(0)  # yield
+                continue
+        raise HTTPException(status_code=500, detail=f'OpenAI疎通エラー: {last_error}')
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'OpenAI疎通エラー: {e}')
+
+
+@app.post('/api/system/cleanup')
+async def system_cleanup() -> Dict[str, Any]:
+    """ローカル生成物のクリーンアップ。OpenAI側のベクトルストア等は対象外。"""
+    try:
+        targets = _collect_paths_for_cleanup()
+        counters = {'files': 0, 'dirs': 0}
+        for cat, paths in targets.items():
+            for p in paths:
+                if os.path.isdir(p):
+                    # ディレクトリ配下を削除
+                    import shutil
+                    if os.path.exists(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                        counters['dirs'] += 1
+                elif os.path.isfile(p):
+                    _safe_remove(p, counters)
+        return {"status": "success", "data": CleanupResponse(removed_files=counters['files'], removed_dirs=counters['dirs'], details=counters).dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post('/api/system/factory-reset')
+async def factory_reset(req: FactoryResetRequest):
+    """アプリ範囲の全データリセット（OpenAI API側は触らない）。"""
+    try:
+        targets = _collect_paths_for_cleanup()
+        # 追加: personas.json（存在すれば）
+        targets.setdefault('personas', []).append(os.path.join(os.getcwd(), '.chainlit', 'personas.json'))
+
+        # プレビュー
+        preview_data: Dict[str, int] = {}
+        for cat, paths in targets.items():
+            count = 0
+            for p in paths:
+                if os.path.isdir(p):
+                    if os.path.exists(p):
+                        count += 1
+                elif os.path.isfile(p):
+                    if os.path.exists(p):
+                        count += 1
+            preview_data[cat] = count
+
+        if req.preview and not req.confirm:
+            return {"status": "success", "data": {"preview": preview_data}}
+
+        if not req.confirm:
+            raise HTTPException(status_code=400, detail="Confirmation required")
+
+        # 削除実行（OpenAI API側の削除呼び出しは一切行わない）
+        counters = {'files': 0, 'dirs': 0}
+        for paths in targets.values():
+            for p in paths:
+                if os.path.isdir(p):
+                    import shutil
+                    shutil.rmtree(p, ignore_errors=True)
+                    counters['dirs'] += 1
+                elif os.path.isfile(p):
+                    _safe_remove(p, counters)
+
+        return {"status": "success", "data": {"removed_files": counters['files'], "removed_dirs": counters['dirs'], "note": "OpenAI側のベクトルストア等は変更していません"}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 class VectorStoreData(BaseModel):
     name: str
     category: Optional[str] = "general"
@@ -148,30 +337,55 @@ async def health_check():
 # システム情報エンドポイント
 @app.get("/api/system/status")
 async def get_system_status():
-    """システム状態情報を取得"""
+    """システム状態情報を取得（UIが期待するフィールドを含む）"""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # 基本統計情報
-        cursor.execute("SELECT COUNT(*) as count FROM threads")
-        thread_count = cursor.fetchone()['count']
-        
-        cursor.execute("SELECT COUNT(*) as count FROM personas")
-        persona_count = cursor.fetchone()['count']
-        
-        cursor.execute("SELECT COUNT(*) as count FROM user_vector_stores")
-        vector_store_count = cursor.fetchone()['count']
-        
-        conn.close()
-        
+        import sys
+        electron_version = os.environ.get('ELECTRON_VERSION', '')
+        app_version = os.environ.get('APP_VERSION', '')
+        python_version = sys.version.split(' ')[0]
+        # Chainlitバージョン取得
+        try:
+            import chainlit  # type: ignore
+            chainlit_version = getattr(chainlit, '__version__', '')
+        except Exception:
+            chainlit_version = ''
+
+        # DB統計/状態
+        db_path = '.chainlit/chainlit.db'
+        database_status = 'unknown'
+        thread_count = 0
+        persona_count = 0
+        vector_store_count = 0
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM threads")
+            thread_count = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(*) as count FROM personas")
+            persona_count = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(*) as count FROM user_vector_stores")
+            vector_store_count = cursor.fetchone()['count']
+            database_status = 'healthy'
+            conn.close()
+        except Exception:
+            database_status = 'unhealthy'
+
+        # OpenAI設定状態（疎通までは行わない）
+        openai_status = 'healthy' if os.getenv('OPENAI_API_KEY') else 'unknown'
+
         return {
             "status": "success",
             "data": {
+                "app_version": app_version,
+                "electron_version": electron_version,
+                "python_version": python_version,
+                "chainlit_version": chainlit_version,
                 "threads": thread_count,
                 "personas": persona_count,
                 "vector_stores": vector_store_count,
-                "database_path": ".chainlit/chainlit.db",
+                "database_path": db_path,
+                "database_status": database_status,
+                "openai_status": openai_status,
                 "timestamp": datetime.now().isoformat()
             }
         }
@@ -282,6 +496,26 @@ async def update_persona(persona_id: int, persona_data: PersonaData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.patch("/api/personas/{persona_id}/status")
+async def update_persona_status(persona_id: int, payload: PersonaStatusUpdate):
+    """ペルソナのアクティブ状態のみ更新"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE personas SET is_active=?, updated_at=? WHERE id=?",
+            (payload.is_active, datetime.now().isoformat(), persona_id),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Persona not found")
+        conn.commit()
+        conn.close()
+        return {"status": "success", "message": "Persona status updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/api/personas/{persona_id}")
 async def delete_persona(persona_id: int):
     """ペルソナ削除"""
@@ -301,19 +535,34 @@ async def delete_persona(persona_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ベクトルストア管理エンドポイント（OpenAI API経由）
+# ベクトルストア管理エンドポイント（OpenAIアカウント全体の一覧）
 @app.get("/api/vectorstores")
 async def list_vector_stores():
-    """ベクトルストア一覧取得（OpenAIのvector_storesを直接列挙）"""
+    """OpenAIアカウントに存在するベクトルストアの全体一覧を返す。"""
     try:
         if not _ensure_vector_store_ready():
             raise HTTPException(status_code=503, detail="Vector store handler is not initialized")
-
+        # 取得ログ（可観測性向上）
+        try:
+            if app_logger:
+                app_logger.info("📁 ベクトルストア一覧 取得開始 (OpenAI全体)")
+        except Exception:
+            pass
         stores = await vector_store_handler.list_vector_stores()
+        try:
+            if app_logger:
+                app_logger.info("📁 ベクトルストア一覧 取得完了", count=len(stores))
+        except Exception:
+            pass
         return {"status": "success", "data": stores}
     except HTTPException:
         raise
     except Exception as e:
+        try:
+            if app_logger:
+                app_logger.error("❌ ベクトルストア一覧 取得失敗", error=str(e))
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -334,6 +583,21 @@ async def create_vector_store(req: CreateVectorStoreRequest):
             raise HTTPException(status_code=500, detail="Failed to create vector store")
 
         info = await vector_store_handler.get_vector_store_info(vs_id) or {"id": vs_id, "name": req.name}
+        # ローカルDBにマッピングを登録（簡易: user_id='admin'）
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO user_vector_stores (user_id, vector_store_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("admin", vs_id, datetime.now().isoformat(), datetime.now().isoformat())
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
         return {"status": "success", "data": info}
     except HTTPException:
         raise
@@ -358,8 +622,8 @@ async def get_vector_store(vector_store_id: str):
         for f in files:
             file_details.append({
                 "id": f.get("id"),
-                "filename": f.get("id"),
-                "size": f.get("size", 0),
+                "filename": f.get("filename") or f.get("id"),
+                "size": f.get("bytes") or f.get("size") or 0,
                 "status": f.get("status", "processed"),
                 "created_at": f.get("created_at")
             })
@@ -427,6 +691,15 @@ async def delete_vector_store(vector_store_id: str):
         ok = await vector_store_handler.delete_vector_store(vector_store_id)
         if not ok:
             raise HTTPException(status_code=500, detail="Failed to delete vector store")
+        # マッピングも削除
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM user_vector_stores WHERE vector_store_id = ?", (vector_store_id,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
         return {"status": "success"}
     except HTTPException:
         raise
@@ -556,3 +829,12 @@ def run_electron_api():
 
 if __name__ == "__main__":
     run_electron_api()
+
+# ====== System utilities (export/cleanup/reset/test key) ======
+
+class TestOpenAIKeyRequest(BaseModel):
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+
+
+## (duplicate removed) older test-openai-key endpoint deleted

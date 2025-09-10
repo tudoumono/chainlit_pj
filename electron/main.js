@@ -114,10 +114,11 @@ CHAINLIT_AUTH_SECRET=
         const cwdEnvExample = path.join(process.cwd(), '.env.example');
         const resourceEnv = app.isPackaged ? path.join(process.resourcesPath, '.env') : null;
         const resourceEnvExample = app.isPackaged ? path.join(process.resourcesPath, '.env.example') : null;
+        const resourceBackendEnvExample = app.isPackaged ? path.join(process.resourcesPath, 'python-backend', '.env.example') : null;
 
         // パッケージ環境では .env.example を優先（秘密情報の同梱を避ける）
         const candidateOrder = app.isPackaged
-            ? [resourceEnvExample, resourceEnv, cwdEnvExample, cwdEnv]
+            ? [resourceEnvExample, resourceBackendEnvExample, resourceEnv, cwdEnvExample, cwdEnv]
             : [cwdEnv, cwdEnvExample, resourceEnv, resourceEnvExample];
 
         const src = candidateOrder.find(p => {
@@ -157,21 +158,26 @@ class ChainlitIntegratedManager {
 
     getPaths() {
         const baseDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..');
+        const pythonBackendDir = app.isPackaged
+            ? path.join(process.resourcesPath, 'python-backend')
+            : path.join(__dirname, '..');
         const pythonDist = app.isPackaged
             ? (process.platform === 'win32'
                 ? path.join(process.resourcesPath, 'python_dist', 'python.exe')
                 : path.join(process.resourcesPath, 'python_dist', 'bin', 'python'))
             : null;
-        return { baseDir, pythonDist };
+        return { baseDir, pythonDist, pythonBackendDir };
     }
 
     buildPythonEnv(extra = {}) {
-        const { baseDir, pythonDist } = this.getPaths();
+        const { baseDir, pythonDist, pythonBackendDir } = this.getPaths();
         const env = {
             ...process.env,
             PYTHONUNBUFFERED: '1',
-            CHAINLIT_CONFIG_PATH: path.join(baseDir, '.chainlit', 'config.toml'),
-            DOTENV_PATH: process.env.DOTENV_PATH || ''
+            CHAINLIT_CONFIG_PATH: path.join(pythonBackendDir, '.chainlit', 'config.toml'),
+            DOTENV_PATH: process.env.DOTENV_PATH || '',
+            ELECTRON_VERSION: process.versions.electron || '',
+            APP_VERSION: app.getVersion ? app.getVersion() : ''
         };
         if (app.isPackaged && pythonDist) {
             const pyHome = path.dirname(pythonDist);
@@ -205,14 +211,14 @@ class ChainlitIntegratedManager {
             console.log('ℹ️ Detected existing Chainlit server; skip spawn');
             return true;
         } catch {}
-        const { baseDir, pythonDist } = this.getPaths();
+        const { baseDir, pythonDist, pythonBackendDir } = this.getPaths();
         console.log('🚀 Chainlit サーバーを起動中...');
         let command;
         let args;
-        let cwd = baseDir;
+        let cwd = pythonBackendDir;
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
-            args = ['-m', 'chainlit', 'run', path.join(baseDir, 'app.py'), '--host', '127.0.0.1', '--port', '8000'];
+            args = ['-m', 'chainlit', 'run', path.join(pythonBackendDir, 'app.py'), '--host', '127.0.0.1', '--port', '8000'];
         } else {
             command = 'uv';
             args = ['run', 'chainlit', 'run', path.join(baseDir, 'app.py'), '--host', '127.0.0.1', '--port', '8000'];
@@ -249,14 +255,14 @@ class ChainlitIntegratedManager {
                 return true;
             } catch {}
         }
-        const { baseDir, pythonDist } = this.getPaths();
+        const { baseDir, pythonDist, pythonBackendDir } = this.getPaths();
         console.log('📡 Electron API サーバーを起動中...');
         let command;
         let args;
-        let cwd = baseDir;
+        let cwd = pythonBackendDir;
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
-            args = [path.join(baseDir, 'electron_api.py')];
+            args = [path.join(pythonBackendDir, 'electron_api.py')];
         } else {
             command = 'uv';
             args = ['run', 'python', path.join(baseDir, 'electron_api.py')];
@@ -495,7 +501,18 @@ app.on('before-quit', () => {
 // Electron API呼び出し
 ipcMain.handle('electron-api', async (event, endpoint, method, data) => {
     try {
-        const result = await chainlitManager.callElectronAPI(endpoint, method, data);
+        // 入力バリデーション
+        const m = String(method || 'GET').toUpperCase();
+        const allowed = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+        if (!allowed.has(m)) {
+            return { success: false, error: `Invalid method: ${m}` };
+        }
+        const ep = String(endpoint || '');
+        if (!ep.startsWith('/api/') || ep.includes('..') || ep.length > 200) {
+            return { success: false, error: `Invalid endpoint: ${ep}` };
+        }
+
+        const result = await chainlitManager.callElectronAPI(ep, m, data);
         // FastAPI標準形 {status: 'success'|'error', data|detail} をフロント向けにフラット化
         if (result && typeof result === 'object' && 'status' in result) {
             if (result.status === 'success') {
@@ -506,7 +523,10 @@ ipcMain.handle('electron-api', async (event, endpoint, method, data) => {
         }
         return { success: true, data: result };
     } catch (error) {
-        return { success: false, error: error.message };
+        // axios由来のエラーには response.status が含まれることがある
+        const status = error?.response?.status;
+        const msg = status ? `HTTP ${status}: ${error.message}` : String(error.message || error);
+        return { success: false, error: msg, status };
     }
 });
 
@@ -602,6 +622,25 @@ ipcMain.handle('window-close', () => {
 ipcMain.handle('open-log-folder', async () => {
     const dir = ensureLogDir();
     return await shell.openPath(dir);
+});
+
+// 開発者ツールのトグル
+ipcMain.handle('toggle-devtools', () => {
+    if (chainlitManager.mainWindow) {
+        if (chainlitManager.mainWindow.webContents.isDevToolsOpened()) {
+            chainlitManager.mainWindow.webContents.closeDevTools();
+        } else {
+            chainlitManager.mainWindow.webContents.openDevTools({ mode: 'detach' });
+        }
+        return { success: true };
+    }
+    return { success: false, error: 'No main window' };
+});
+
+// アプリ再起動
+ipcMain.handle('app-relaunch', () => {
+    app.relaunch();
+    app.exit(0);
 });
 
 // 既定ブラウザでChainlitを開く（必要に応じてパスを付与）

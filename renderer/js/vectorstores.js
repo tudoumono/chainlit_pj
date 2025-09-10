@@ -28,6 +28,16 @@ class VectorStoreManager {
                 window.electronAPI.app.openInBrowser('');
             });
         }
+
+        // 再読み込み
+        const refreshBtn = document.getElementById('refresh-vectorstores-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', async () => {
+                this.isLoaded = false;
+                await this.loadVectorStores();
+                window.NotificationManager?.info('更新', 'ベクトルストア一覧を更新しました');
+            });
+        }
     }
     
     async loadVectorStores() {
@@ -267,7 +277,7 @@ class VectorStoreManager {
             } else {
                 const fileRows = files.map(file => `
                     <tr>
-                        <td>${this.escapeHtml(file.filename)}</td>
+                        <td title="${this.escapeHtml(file.id)}">${this.escapeHtml(file.filename || file.id)}</td>
                         <td>${this.formatBytes(file.size || 0)}</td>
                         <td><span class="badge ${this.getFileStatusBadge(file.status)}">${this.getFileStatusText(file.status)}</span></td>
                         <td>${this.formatDate(file.created_at)}</td>

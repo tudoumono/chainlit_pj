@@ -329,3 +329,26 @@ async def safe_list_vector_store_files(client: Any, vs_id: str) -> List[Dict]:
     except Exception as e:
         print(f"❌ ファイル一覧取得エラー: {e}")
         return []
+
+
+async def safe_retrieve_file_metadata(client: Any, file_id: str) -> Optional[Dict]:
+    """
+    Files APIからメタデータを安全に取得
+
+    Returns: {id, filename, bytes, created_at} or None
+    """
+    try:
+        if not hasattr(client, "files"):
+            return None
+        f = await client.files.retrieve(file_id)
+        if not f:
+            return None
+        return {
+            "id": getattr(f, "id", file_id),
+            "filename": getattr(f, "filename", None),
+            "bytes": getattr(f, "bytes", 0),
+            "created_at": getattr(f, "created_at", None),
+        }
+    except Exception as e:
+        print(f"❌ ファイルメタ取得エラー({file_id}): {e}")
+        return None
