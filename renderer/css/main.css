@@ -252,7 +252,7 @@ body {
 
 /* レイアウト調整（設定ヘッダー内で目立たせる） */
 .panel-header #start-chat-btn {
-    margin-left: 0.75rem;
+    margin-right: 0.75rem;
 }
 
 @media (max-width: 768px) {

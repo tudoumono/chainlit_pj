@@ -49,6 +49,17 @@ app.py (440行) - コア処理のみ
 - **疎結合**: 遅延インポートで循環参照を回避
 - **高凝集**: 関連機能を論理的にグループ化
 
+## 📚 ドキュメント
+
+- プロジェクト概要: `README.md`（本書）
+- 実装サマリ: `IMPLEMENTATION_SUMMARY_v1.0.md`
+- Electron/Python統合ガイド: `ElectronとPython統合_詳細実装ガイド.md`
+- アーカイブ（旧版・補助資料）:
+  - `docs/archive/SETUP_GUIDE.md`
+  - `docs/archive/vectorstore_management.md`
+  - `docs/archive/CLAUDE.md`
+  - `docs/archive/CLAUDE.local.md`
+
 ## 📦 実装状況
 
 | Phase | タイトル | 状態 | アーキテクチャ対応 |
@@ -234,6 +245,10 @@ python3 -c "import app; print('Import successful')"
 chainlit_pj/
 ├── app.py                    # メインアプリケーション (440行)
 ├── docs/archive/app_backup.py # リファクタリング前バックアップ（退避済み）
+├── docs/archive/SETUP_GUIDE.md
+├── docs/archive/vectorstore_management.md
+├── docs/archive/CLAUDE.md
+├── docs/archive/CLAUDE.local.md
 ├── run.py                    # 起動スクリプト
 ├── auth.py                   # 認証ハンドラー
 ├── data_layer.py             # SQLiteデータレイヤー

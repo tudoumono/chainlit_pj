@@ -3,7 +3,7 @@
 OpenAI SDKの異なるバージョンに対応
 """
 
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 
 
 def get_vector_store_api(client: Any) -> Optional[Any]:
@@ -225,24 +225,107 @@ async def safe_add_file_to_vector_store(client: Any, vs_id: str, file_id: str) -
         if not vs_files_api:
             return False
         
-        # 通常のfiles APIを試す
-        if hasattr(vs_files_api, 'create'):
-            await vs_files_api.create(
-                vector_store_id=vs_id,
-                file_id=file_id
-            )
-            return True
-        
-        # file_batches APIを試す
-        elif hasattr(vs_files_api, 'create'):
-            await vs_files_api.create(
-                vector_store_id=vs_id,
-                file_ids=[file_id]
-            )
-            return True
+        # files APIにcreateがある場合
+        if hasattr(vs_files_api, "create"):
+            # 2系統（files.create と file_batches.create）が存在し得るため
+            # 引数名で分岐（files: file_id / file_batches: file_ids）
+            try:
+                await vs_files_api.create(vector_store_id=vs_id, file_id=file_id)
+                return True
+            except TypeError:
+                # file_batches系のcreate
+                await vs_files_api.create(vector_store_id=vs_id, file_ids=[file_id])
+                return True
         
         return False
         
     except Exception as e:
         print(f"❌ ファイル追加エラー: {e}")
         return False
+
+
+async def safe_attach_file_to_vector_store_and_poll(client: Any, vs_id: str, file_id: str) -> bool:
+    """
+    ファイルをベクトルストアに追加し、処理完了までポーリング
+
+    優先順:
+    1) file_batches.create_and_poll
+    2) file_batches.create → retrieve で手動ポーリング
+    3) files.create （ポーリングなし。SDKにより自動処理）
+    """
+    try:
+        vs_api = get_vector_store_api(client)
+        if not vs_api:
+            return False
+
+        # file_batchesのcreate_and_pollがあれば最優先
+        if hasattr(vs_api, "file_batches") and hasattr(vs_api.file_batches, "create_and_poll"):
+            batch = await vs_api.file_batches.create_and_poll(
+                vector_store_id=vs_id, file_ids=[file_id]
+            )
+            status = getattr(batch, "status", "completed")
+            return status == "completed"
+
+        # 次点: create → retrieve で手動ポーリング
+        if hasattr(vs_api, "file_batches") and hasattr(vs_api.file_batches, "create") and hasattr(vs_api.file_batches, "retrieve"):
+            created = await vs_api.file_batches.create(
+                vector_store_id=vs_id, file_ids=[file_id]
+            )
+            batch_id = getattr(created, "id", None)
+            if not batch_id:
+                return False
+            # 簡易ポーリング（最大30秒）
+            import asyncio
+            waited = 0
+            while waited < 30:
+                batch = await vs_api.file_batches.retrieve(
+                    vector_store_id=vs_id, batch_id=batch_id
+                )
+                status = getattr(batch, "status", "completed")
+                if status in ("completed", "failed"):
+                    return status == "completed"
+                await asyncio.sleep(2)
+                waited += 2
+            return False
+
+        # 最後にfiles.create（ポーリングなし）
+        vs_files_api = get_vector_store_files_api(client)
+        if vs_files_api and hasattr(vs_files_api, "create"):
+            await vs_files_api.create(vector_store_id=vs_id, file_id=file_id)
+            return True
+
+        return False
+    except Exception as e:
+        print(f"❌ ファイル追加+ポーリングエラー: {e}")
+        return False
+
+
+async def safe_list_vector_store_files(client: Any, vs_id: str) -> List[Dict]:
+    """
+    ベクトルストア内のファイル一覧を安全に取得
+    戻り値は {id, created_at, status} の辞書配列
+    """
+    try:
+        vs_files_api = get_vector_store_files_api(client)
+        if not vs_files_api:
+            return []
+
+        # files.list が一般的
+        if hasattr(vs_files_api, "list"):
+            result = await vs_files_api.list(vector_store_id=vs_id)
+            data = getattr(result, "data", [])
+            files: List[Dict] = []
+            for f in data:
+                files.append(
+                    {
+                        "id": getattr(f, "id", None),
+                        "created_at": getattr(f, "created_at", 0),
+                        "status": getattr(f, "status", "processed"),
+                    }
+                )
+            return files
+
+        return []
+    except Exception as e:
+        print(f"❌ ファイル一覧取得エラー: {e}")
+        return []

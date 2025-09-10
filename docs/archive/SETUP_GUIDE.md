@@ -120,3 +120,4 @@ ElectronとPython統合_詳細実装ガイド.mdを参照してください。
 ---
 
 *Happy Coding! 🎉*
+

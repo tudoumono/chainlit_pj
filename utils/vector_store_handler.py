@@ -48,6 +48,7 @@ import aiofiles
 import mimetypes
 from pathlib import Path
 import chainlit as cl
+from .logger import app_logger
 # from utils.project_settings import get_app_settings, get_project_paths, get_mime_settings
 from utils.vector_store_api_helper import (
     get_vector_store_api,
@@ -188,24 +189,22 @@ class VectorStoreHandler:
         
         💡 初心者向け: OpenAI APIを使うための「電話回線」のようなものを準備します
         """
-        print(f"🔧 OpenAIクライアント初期化中...")
+        app_logger.debug("🔧 OpenAIクライアント初期化中...")
         
         if not self.api_key or self.api_key == "your_api_key_here":
-            print(f"⚠️ OpenAI APIキーが設定されていません")
+            app_logger.warning("⚠️ OpenAI APIキーが設定されていません")
             return
         
-        print(f"✅ APIキー確認済み: {self.api_key[:8]}...{self.api_key[-4:]}")
+        app_logger.info("✅ APIキー確認済み", key_prefix=self.api_key[:8], key_suffix=self.api_key[-4:])
         
         # プロキシ設定を確認
         proxy_enabled = os.getenv("PROXY_ENABLED", "false").lower() == "true"
         http_proxy = os.getenv("HTTP_PROXY", "") if proxy_enabled else ""
         https_proxy = os.getenv("HTTPS_PROXY", "") if proxy_enabled else ""
         
-        print(f"🌐 プロキシ設定:")
-        print(f"   プロキシ有効: {proxy_enabled}")
+        app_logger.debug("🌐 プロキシ設定", enabled=proxy_enabled)
         if proxy_enabled:
-            print(f"   HTTPプロキシ: {http_proxy if http_proxy else '未設定'}")
-            print(f"   HTTPSプロキシ: {https_proxy if https_proxy else '未設定'}")
+            app_logger.debug("HTTP/HTTPSプロキシ", http=http_proxy or '未設定', https=https_proxy or '未設定')
         
         # httpxクライアントの設定
         http_client = None
@@ -219,7 +218,7 @@ class VectorStoreHandler:
             if https_proxy:
                 proxies["https://"] = https_proxy
             
-            print(f"🔄 httpxクライアントをプロキシ設定で作成")
+            app_logger.debug("🔄 httpxクライアントをプロキシ設定で作成")
             
             # タイムアウト設定を追加
             timeout = httpx.Timeout(60.0, connect=10.0)
@@ -252,11 +251,10 @@ class VectorStoreHandler:
                 timeout=60.0
             )
             
-            print(f"✅ OpenAIクライアント初期化完了")
+            app_logger.info("✅ OpenAIクライアント初期化完了")
             
         except Exception as e:
-            print(f"❌ OpenAIクライアント初期化エラー: {e}")
-            print(f"   エラータイプ: {type(e).__name__}")
+            app_logger.error("❌ OpenAIクライアント初期化エラー", error=str(e), error_type=type(e).__name__)
             self.client = None
             self.async_client = None
     
@@ -278,59 +276,45 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                print("⚠️ OpenAIクライアントが初期化されていません")
+                app_logger.warning("⚠️ OpenAIクライアントが初期化されていません")
                 return None
             
-            print(f"📝 ベクトルストア作成開始: {name}")
-            
-            # APIヘルパーを使用してベクトルストアAPIを取得
-            vs_api = get_vector_store_api(self.async_client)
-            if not vs_api:
-                print("❌ ベクトルストアAPIが利用できません")
-                print("   OpenAI SDKのバージョンを確認してください")
+            app_logger.info("📝 ベクトルストア作成開始", name=name)
+
+            # 安全APIで作成
+            from .vector_store_api_helper import safe_create_vector_store
+            vector_store_id = await safe_create_vector_store(self.async_client, name=name)
+            if not vector_store_id:
+                app_logger.error("❌ ベクトルストアAPIが利用できません or 作成失敗")
                 return None
-            
-            # ベクトルストアを作成
-            if file_ids:
-                vector_store = await vs_api.create(
-                    name=name,
-                    file_ids=file_ids
-                )
-            else:
-                vector_store = await vs_api.create(
-                    name=name
-                )
-            
-            print(f"✅ ベクトルストア作成成功: {vector_store.id}")
-            print(f"   名前: {vector_store.name}")
+            app_logger.info("✅ ベクトルストア作成成功", id=vector_store_id, name=name)
             
             # ステータス確認
             max_wait = 30
             waited = 0
             while waited < max_wait:
-                vs = await safe_retrieve_vector_store(self.async_client, vector_store.id)
+                vs = await safe_retrieve_vector_store(self.async_client, vector_store_id)
                 if not vs:
-                    print(f"⚠️ ベクトルストアの取得に失敗: {vector_store.id}")
+                    app_logger.warning("⚠️ ベクトルストアの取得に失敗", id=vector_store_id)
                     break
                     
                 status = getattr(vs, 'status', 'completed')  # statusがない場合はcompletedとみなす
                 if status == "completed":
-                    print(f"✅ ベクトルストアの準備が完了しました: {vs.id}")
+                    app_logger.info("✅ ベクトルストアの準備が完了", id=getattr(vs, 'id', vector_store_id))
                     break
                 elif status == "failed":
-                    print(f"❌ ベクトルストアの作成に失敗しました: {vs.id}")
+                    app_logger.error("❌ ベクトルストアの作成に失敗", id=getattr(vs, 'id', vector_store_id))
                     return None
-                print(f"⏳ ベクトルストアを準備中... ({status})")
+                app_logger.debug("⏳ ベクトルストアを準備中...", status=status)
                 await asyncio.sleep(2)
                 waited += 2
             
-            return vector_store.id
+            return vector_store_id
                 
         except Exception as e:
-            print(f"❌ ベクトルストア作成エラー: {e}")
-            print(f"   エラータイプ: {type(e).__name__}")
+            app_logger.error("❌ ベクトルストア作成エラー", error=str(e), error_type=type(e).__name__)
             import traceback
-            print(f"   スタックトレース:\n{traceback.format_exc()}")
+            app_logger.debug("STACKTRACE", trace=traceback.format_exc())
             return None
     
     async def upload_file(self, file_path: str, purpose: str = "assistants") -> Optional[str]:
@@ -420,64 +404,21 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                print("⚠️ OpenAIクライアントが初期化されていません")
+                app_logger.warning("⚠️ OpenAIクライアントが初期化されていません")
                 return False
-            
-            # ベクトルストアAPIを取得
-            vs_api = get_vector_store_api(self.async_client)
-            if not vs_api:
-                print("❌ ベクトルストアAPIが利用できません")
-                return False
-            
-            print(f"📎 ファイルをベクトルストアに追加中: {file_id}")
-            
-            # file_batchesが利用可能か確認
-            if hasattr(vs_api, 'file_batches'):
-                file_batch = await vs_api.file_batches.create(
-                    vector_store_id=vector_store_id,
-                    file_ids=[file_id]
-                )
-                
-                print(f"✅ ファイルバッチ作成: {file_batch.id}")
-                
-                # 処理完了を待つ
-                max_wait = 30
-                waited = 0
-                while waited < max_wait:
-                    batch = await vs_api.file_batches.retrieve(
-                        vector_store_id=vector_store_id,
-                        batch_id=file_batch.id
-                    )
-                    status = getattr(batch, 'status', 'completed')
-                    if status == "completed":
-                        print(f"✅ ファイルのベクトル化が完了しました")
-                        return True
-                    elif status == "failed":
-                        print(f"❌ ファイルのベクトル化に失敗しました")
-                        return False
-                    print(f"⏳ ファイルを処理中... ({status})")
-                    await asyncio.sleep(2)
-                    waited += 2
-            
-            # filesが利用可能な場合
-            elif hasattr(vs_api, 'files'):
-                result = await vs_api.files.create(
-                    vector_store_id=vector_store_id,
-                    file_id=file_id
-                )
-                print(f"✅ ファイルを追加しました: {file_id}")
-                return True
-            
+
+            app_logger.info("📎 ファイルをベクトルストアに追加中", file_id=file_id, vector_store_id=vector_store_id)
+            from .vector_store_api_helper import safe_attach_file_to_vector_store_and_poll
+            ok = await safe_attach_file_to_vector_store_and_poll(self.async_client, vector_store_id, file_id)
+            if ok:
+                app_logger.info("✅ ファイル追加完了", file_id=file_id)
             else:
-                print("❌ ファイル追加APIが見つかりません")
-                return False
-            
-            return True
-            
+                app_logger.error("❌ ファイル追加失敗", file_id=file_id)
+            return ok
         except Exception as e:
-            print(f"❌ ファイル追加エラー: {e}")
             import traceback
-            print(f"   スタックトレース:\n{traceback.format_exc()}")
+            app_logger.error("❌ ファイル追加エラー", error=str(e))
+            app_logger.debug("STACKTRACE", trace=traceback.format_exc())
             return False
     
     async def list_vector_stores(self) -> List[Dict]:
@@ -489,10 +430,10 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                print("⚠️ OpenAIクライアントが初期化されていません")
+                app_logger.warning("⚠️ OpenAIクライアントが初期化されていません")
                 return []
             
-            print(f"📁 ベクトルストア一覧を取得中...")
+            app_logger.info("📁 ベクトルストア一覧を取得中...")
             
             # APIヘルパーを使用して一覧を取得
             vector_stores_data = await safe_list_vector_stores(self.async_client)
@@ -510,15 +451,15 @@ class VectorStoreHandler:
                             "status": getattr(vs_detail, 'status', 'unknown')
                         })
                 except Exception as e:
-                    print(f"⚠️ ベクトルストア {vs.id} の取得に失敗しました: {e}")
+                    app_logger.warning("⚠️ ベクトルストア詳細取得に失敗", id=vs.id, error=str(e))
                     continue
             
             return stores_list
             
         except Exception as e:
-            print(f"❌ ベクトルストア一覧取得エラー: {e}")
             import traceback
-            print(f"   スタックトレース:\n{traceback.format_exc()}")
+            app_logger.error("❌ ベクトルストア一覧取得エラー", error=str(e))
+            app_logger.debug("STACKTRACE", trace=traceback.format_exc())
             return []
     
     async def get_vector_store_files(self, vector_store_id: str) -> List[Dict]:
@@ -533,40 +474,14 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                print("⚠️ OpenAIクライアントが初期化されていません")
+                app_logger.warning("⚠️ OpenAIクライアントが初期化されていません")
                 return []
-            
-            # Responses API形式で取得を試みる
-            try:
-                result = await self.async_client.vector_stores.files.list(
-                    vector_store_id=vector_store_id
-                )
-                files_list = []
-                for file in result.data:
-                    files_list.append({
-                        "id": file.id,
-                        "created_at": file.created_at,
-                        "status": "processed"
-                    })
-                return files_list
-                
-            except AttributeError:
-                # Beta APIにフォールバック
-                files = await self.async_client.vector_stores.files.list(
-                    vector_store_id=vector_store_id
-                )
-                
-                files_list = []
-                for file in files.data:
-                    files_list.append({
-                        "id": file.id,
-                        "created_at": file.created_at,
-                        "status": file.status
-                    })
-                return files_list
+
+            from .vector_store_api_helper import safe_list_vector_store_files
+            return await safe_list_vector_store_files(self.async_client, vector_store_id)
             
         except Exception as e:
-            print(f"❌ ファイル一覧取得エラー: {e}")
+            app_logger.error("❌ ファイル一覧取得エラー", error=str(e))
             return []
     
     async def delete_vector_store(self, vector_store_id: str) -> bool:
@@ -581,27 +496,19 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                print("⚠️ OpenAIクライアントが初期化されていません")
+                app_logger.warning("⚠️ OpenAIクライアントが初期化されていません")
                 return False
-            
-            # Responses API形式で削除を試みる
-            try:
-                await self.async_client.vector_stores.delete(
-                    vector_store_id=vector_store_id
-                )
-                print(f"✅ ベクトルストア削除: {vector_store_id}")
-                return True
-                
-            except AttributeError:
-                # Beta APIにフォールバック
-                await self.async_client.vector_stores.delete(
-                    vector_store_id=vector_store_id
-                )
-                print(f"✅ ベクトルストア削除（Beta API）: {vector_store_id}")
-                return True
-            
+
+            from .vector_store_api_helper import safe_delete_vector_store
+            ok = await safe_delete_vector_store(self.async_client, vector_store_id)
+            if ok:
+                app_logger.info("✅ ベクトルストア削除", id=vector_store_id)
+            else:
+                app_logger.error("❌ ベクトルストア削除失敗", id=vector_store_id)
+            return ok
+
         except Exception as e:
-            print(f"❌ ベクトルストア削除エラー: {e}")
+            app_logger.error("❌ ベクトルストア削除エラー", error=str(e))
             return False
     
     async def rename_vector_store(self, vector_store_id: str, new_name: str) -> bool:
@@ -625,29 +532,19 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                print("⚠️ OpenAIクライアントが初期化されていません")
+                app_logger.warning("⚠️ OpenAIクライアントが初期化されていません")
                 return False
-            
-            # Responses API形式で更新を試みる
-            try:
-                await self.async_client.vector_stores.update(
-                    vector_store_id=vector_store_id,
-                    name=new_name
-                )
-                print(f"✅ ベクトルストア名を変更: {vector_store_id} -> {new_name}")
-                return True
-                
-            except AttributeError:
-                # Beta APIにフォールバック
-                await self.async_client.vector_stores.update(
-                    vector_store_id=vector_store_id,
-                    name=new_name
-                )
-                print(f"✅ ベクトルストア名を変更（Beta API）: {vector_store_id} -> {new_name}")
-                return True
-            
+
+            from .vector_store_api_helper import safe_update_vector_store
+            ok = await safe_update_vector_store(self.async_client, vector_store_id, name=new_name)
+            if ok:
+                app_logger.info("✅ ベクトルストア名を変更", id=vector_store_id, name=new_name)
+            else:
+                app_logger.error("❌ ベクトルストア名変更エラー", id=vector_store_id, name=new_name)
+            return ok
+
         except Exception as e:
-            print(f"❌ ベクトルストア名変更エラー: {e}")
+            app_logger.error("❌ ベクトルストア名変更エラー", error=str(e))
             return False
     
     def is_supported_file(self, filename: str) -> bool:
@@ -969,53 +866,41 @@ class VectorStoreHandler:
         """
         try:
             if not self.async_client:
-                print("⚠️ OpenAIクライアントが初期化されていません")
+                app_logger.warning("⚠️ OpenAIクライアントが初期化されていません")
                 return None
-            
+
             # IDの型チェック（リスト形式で渡される場合の対処）
             if isinstance(vector_store_id, list):
-                print(f"⚠️ ベクトルストアIDがリスト形式で渡されました: {vector_store_id}")
+                app_logger.warning("⚠️ ベクトルストアIDがリスト形式", value=str(vector_store_id))
                 if vector_store_id:
                     vector_store_id = vector_store_id[0]  # 最初の要素を使用
-                    print(f"   最初の要素を使用: {vector_store_id}")
+                    app_logger.debug("最初の要素を使用", id=vector_store_id)
                 else:
-                    print("   空のリストのため処理をスキップ")
+                    app_logger.debug("空リストのため処理スキップ")
                     return None
-            
-            # Responses API形式で取得を試みる
-            try:
-                vector_store = await self.async_client.vector_stores.retrieve(
-                    vector_store_id=vector_store_id
-                )
-                
-                return {
-                    "id": vector_store.id,
-                    "name": vector_store.name,
-                    "created_at": vector_store.created_at,
-                    "status": "completed"
-                }
-                
-            except AttributeError:
-                # Beta APIにフォールバック
-                print(f"ℹ️ Responses APIが利用できないため、Beta APIにフォールバック")
-                vector_store = await self.async_client.vector_stores.retrieve(
-                    vector_store_id=vector_store_id
-                )
-                
-                return {
-                    "id": vector_store.id,
-                    "name": vector_store.name,
-                    "file_counts": vector_store.file_counts,
-                    "created_at": vector_store.created_at,
-                    "status": vector_store.status
-                }
-            
+
+            from .vector_store_api_helper import safe_retrieve_vector_store
+            vector_store = await safe_retrieve_vector_store(self.async_client, vector_store_id)
+            if not vector_store:
+                return None
+
+            vs_dict = {
+                "id": getattr(vector_store, "id", vector_store_id),
+                "name": getattr(vector_store, "name", "Unnamed"),
+                "created_at": getattr(vector_store, "created_at", 0),
+            }
+            if hasattr(vector_store, "file_counts"):
+                vs_dict["file_counts"] = getattr(vector_store, "file_counts", {})
+            if hasattr(vector_store, "status"):
+                vs_dict["status"] = getattr(vector_store, "status", "completed")
+            else:
+                vs_dict["status"] = "completed"
+            return vs_dict
+
         except Exception as e:
             import traceback
-            print(f"❌ ベクトルストア情報取得エラー (ID: {vector_store_id}):")
-            print(f"   エラーの型: {type(e).__name__}")
-            print(f"   エラー詳細: {str(e)}")
-            print(f"   トレースバック:\n{traceback.format_exc()}")
+            app_logger.error("❌ ベクトルストア情報取得エラー", id=str(vector_store_id), error_type=type(e).__name__, error=str(e))
+            app_logger.debug("STACKTRACE", trace=traceback.format_exc())
             return None
     
     async def list_vector_store_files(self, vector_store_id: str) -> List[Dict]:

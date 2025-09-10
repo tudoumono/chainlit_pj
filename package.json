@@ -46,7 +46,6 @@
       ".env.example",
       "requirements.in",
       "pyproject.toml",
-      "CLAUDE.md",
       {
         "from": ".",
         "filter": [
