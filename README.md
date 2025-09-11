@@ -227,12 +227,28 @@ python3 -c "import app; print('Import successful')"
   - `CHAINLIT_CONFIG_PATH` → `<resources>/.chainlit/config.toml`
   - `EXE_DIR`, `CHAT_LOG_DIR`, `CONSOLE_LOG_DIR` → `app.getPath('userData')` 等
 
-### 共有 .env の運用
+### 共有 .env / データの運用（Portable版）
 - 開発時: ルートの `.env` を使用（両者で共通）。
-- 配布時: 初回起動時に `<userData>/.env` を自動作成（`resources/.env` または `resources/.env.example` をコピー）。以降は同ファイルを Electron と Python の双方で参照。
-- 実装: electron/main.js に `ensureUserEnvFile()` を実装済。`get-system-info` IPC で `dotenvPath` を確認可能。
+- 配布時: 初回起動時に **EXEと同じディレクトリ** に `.env` と `.chainlit/` を自動作成（テンプレをコピー）。
+- 会話履歴は `.chainlit/chainlit.db`（EXEと同じ場所）。
+- EXEフォルダに書き込み権限が無い場合はエラーで起動を停止します。
 
-詳細: docs/STRUCTURE_OPTION_B.md および docs/WINDOWS_PACKAGING.md を参照（配布はWindowsのみ）。
+詳細: docs/WINDOWS_PACKAGING.md / docs/WINDOWS_TASKS.md を参照（配布はWindowsのみ）。
+
+## 📨 Windows配布手順（Portable版）
+
+インストール不要のZIP配布ガイドです。ZIPを展開してEXEを実行するだけで使えます。
+
+- 対象OS: Windows 10 / 11（x64）
+- 配布物: `Chainlit AI Workspace-<version>-windows-x64.zip`
+- 使い方:
+  1. ZIPを書き込み可能なフォルダに展開（デスクトップ/ドキュメント配下など）。
+  2. 展開フォルダ直下の `Chainlit AI Workspace.exe` を実行。
+  3. 初回に `.env` と `.chainlit/` がEXEと同じ場所に自動作成されます。`.env` の `OPENAI_API_KEY` を設定してください。
+- 保存先（すべてEXEと同じフォルダ）:
+  - `.env`, `.chainlit/chainlit.db`, `.chainlit/personas/`
+- 更新方法: 新しいZIPを上書き展開（履歴と設定は残ります）。
+- 注意: `C:\\Program Files` 配下は書き込み不可のため不可。SmartScreen警告は「詳細情報」→「実行」で進めます。
 
 選択肢A（`integrated_run.py` による統合起動）を選ばない理由:
 - 起動/終了/ログ/環境変数の責務が分散し、配布運用が複雑化するため。

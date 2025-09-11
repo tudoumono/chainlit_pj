@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>Chainlit AI Workspace — Windows配布手順（Portable版・一枚まとめ）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --fg:#111; --muted:#444; --accent:#2563eb; }
+    html,body{ margin:0; padding:0; }
+    body{ font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans JP', YuGothic, Meiryo, sans-serif; color:var(--fg); }
+    .page{ max-width: 960px; margin: 24px auto; padding: 24px; }
+    h1{ font-size: 22px; margin: 0 0 12px; }
+    h2{ font-size: 18px; margin: 20px 0 8px; }
+    p, li{ line-height: 1.7; }
+    ul{ margin: 8px 0 8px 20px; }
+    .note{ color: var(--muted); font-size: 13px; }
+    .kbd{ padding: 2px 6px; border: 1px solid #ccc; border-bottom-width: 2px; border-radius: 4px; background: #fafafa; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .box{ border: 1px dashed #bbb; padding: 10px; border-radius: 6px; background: #fcfcfc; }
+    @media print{
+      .page{ margin: 0; }
+      a{ color: inherit; text-decoration: none; }
+    }
+  </style>
+  <!-- 印刷時にA4一枚で収まるよう、フォントサイズは控えめに設定 -->
+</head>
+<body>
+  <div class="page">
+    <h1>Chainlit AI Workspace — Windows配布手順（Portable版・一枚まとめ）</h1>
+    <p class="note">対象: Windows 10 / 11（x64） / 非エンジニア配布想定。ブラウザの「<span class="kbd">Ctrl</span> + <span class="kbd">P</span> → PDFに保存」でPDF化できます。</p>
+
+    <h2>1) 受け取りと展開</h2>
+    <ul>
+      <li>ZIP（例: <code>Chainlit AI Workspace-&lt;version&gt;-windows-x64.zip</code>）を、<strong>書き込み可能</strong>なフォルダに展開します。</li>
+      <li>例: デスクトップ / ドキュメント / ダウンロード配下など</li>
+      <li><strong>注意:</strong> <code>C:\\Program Files</code> 直下は書き込み権限が無いため不可</li>
+    </ul>
+
+    <h2>2) 起動</h2>
+    <ul>
+      <li>展開フォルダ直下の <strong>Chainlit AI Workspace.exe</strong> をダブルクリック。</li>
+      <li>初回起動時、同じフォルダに以下が自動作成されます：
+        <ul>
+          <li><code>.env</code>（設定ファイル）</li>
+          <li><code>.chainlit/</code>（データフォルダ。<code>chainlit.db</code> に履歴が保存）</li>
+        </ul>
+      </li>
+    </ul>
+
+    <h2>3) 初期設定（必須）</h2>
+    <ul>
+      <li><code>.env</code> をテキストエディタで開き、以下を設定します：</li>
+    </ul>
+    <div class="box">
+      <code>OPENAI_API_KEY</code>（OpenAIのAPIキー）<br>
+      <code>DEFAULT_MODEL</code>（例 <code>gpt-4o-mini</code>）<br>
+      必要に応じてポート（<code>CHAINLIT_PORT</code> / <code>ELECTRON_API_PORT</code>）
+    </div>
+
+    <h2>4) 使い方</h2>
+    <ul>
+      <li>起動後、設定タブからAPIキー等を確認できます。</li>
+      <li>チャット履歴は <code>.chainlit/chainlit.db</code> に自動保存されます。</li>
+    </ul>
+
+    <h2>5) アップデート</h2>
+    <ul>
+      <li>新しいZIPを同じ場所に展開（上書き）するだけでOK。</li>
+      <li><code>.env</code> と <code>.chainlit/</code> は残るため、設定・履歴は維持されます。</li>
+    </ul>
+
+    <h2>6) トラブルシュート</h2>
+    <ul>
+      <li><strong>SmartScreen 警告:</strong> 「詳細情報」→「実行」を選択。</li>
+      <li><strong>「書き込みできません」エラー:</strong> 別の書き込み可能なフォルダ（デスクトップ等）へ移動して再実行。</li>
+      <li><strong>ポート競合:</strong> <code>.env</code> の <code>CHAINLIT_PORT</code> / <code>ELECTRON_API_PORT</code> を変更して再起動。</li>
+      <li><strong>履歴が残らない:</strong> フォルダの書き込み権限や <code>.chainlit/</code> の存在を確認。</li>
+    </ul>
+
+    <h2>7) 管理者/配布担当向け（ビルド）</h2>
+    <ul>
+      <li>portable/zip 生成: <code>npm run build:portable</code></li>
+      <li>生成物: <code>dist/</code> に portable EXE と ZIP</li>
+      <li>詳細: <code>docs/WINDOWS_PACKAGING.md</code> / <code>docs/WINDOWS_TASKS.md</code></li>
+    </ul>
+
+    <p class="note">このページはブラウザで開き、印刷（Ctrl+P）からPDFに保存できます。</p>
+  </div>
+</body>
+</html>
+

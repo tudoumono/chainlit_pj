@@ -83,6 +83,80 @@ function ensureLogDir() {
     return dir;
 }
 
+// インストールディレクトリ（EXEと同じ場所）を返す
+function getInstallDir() {
+    try {
+        if (app.isPackaged) return path.dirname(process.execPath);
+        return path.join(__dirname, '..');
+    } catch {
+        return process.cwd();
+    }
+}
+
+// EXE隣に .env/.chainlit を準備（未存在ならテンプレをコピー）
+function ensureLocalEnvAndConfig() {
+    const installDir = getInstallDir();
+    const localChainlitDir = path.join(installDir, '.chainlit');
+    try { fs.mkdirSync(localChainlitDir, { recursive: true }); } catch {}
+
+    const envPath = path.join(installDir, '.env');
+    if (!fs.existsSync(envPath)) {
+        const candidates = [
+            app.isPackaged ? path.join(process.resourcesPath, 'python-backend', '.env.example') : null,
+            app.isPackaged ? path.join(process.resourcesPath, '.env.example') : null,
+            path.join(process.cwd(), '.env'),
+            path.join(process.cwd(), '.env.example')
+        ].filter(Boolean);
+        const src = candidates.find(p => { try { return p && fs.existsSync(p); } catch { return false; } });
+        const fallback = `# Local .env (created next to EXE)\nOPENAI_API_KEY=\nDEFAULT_MODEL=gpt-4o-mini\nCHAINLIT_AUTH_SECRET=\n`;
+        try { src ? fs.copyFileSync(src, envPath) : fs.writeFileSync(envPath, fallback, 'utf-8'); } catch {}
+    }
+
+    const cfgDest = path.join(localChainlitDir, 'config.toml');
+    if (!fs.existsSync(cfgDest)) {
+        const cfgSrc = app.isPackaged
+            ? path.join(process.resourcesPath, 'python-backend', '.chainlit', 'config.toml')
+            : path.join(process.cwd(), '.chainlit', 'config.toml');
+        try { if (fs.existsSync(cfgSrc)) fs.copyFileSync(cfgSrc, cfgDest); } catch {}
+    }
+
+    const personasDest = path.join(localChainlitDir, 'personas');
+    if (!fs.existsSync(personasDest)) {
+        const personasSrc = app.isPackaged
+            ? path.join(process.resourcesPath, 'python-backend', '.chainlit', 'personas')
+            : path.join(process.cwd(), '.chainlit', 'personas');
+        try { if (fs.existsSync(personasSrc)) fs.cpSync(personasSrc, personasDest, { recursive: true }); } catch {}
+    }
+
+    return { installDir, localChainlitDir, envPath };
+}
+
+function isDirWritable(dir) {
+    try {
+        const p = path.join(dir, '.write_test.tmp');
+        fs.writeFileSync(p, 'ok');
+        fs.unlinkSync(p);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function getUserBackendWorkdir() {
+    try {
+        const dir = path.join(app.getPath('userData'), 'backend');
+        const dotChainlit = path.join(dir, '.chainlit');
+        fs.mkdirSync(dotChainlit, { recursive: true });
+        return dir;
+    } catch {
+        // フォールバック: カレント直下の Log/..
+        const fallback = path.join(process.cwd(), 'UserDataBackend');
+        const dotChainlit = path.join(fallback, '.chainlit');
+        try { fs.mkdirSync(dotChainlit, { recursive: true }); } catch {}
+        return fallback;
+    }
+}
+
 function setupMainLogger() {
     const dir = ensureLogDir();
     const mainLogPath = path.join(dir, 'main.log');
@@ -107,68 +181,9 @@ function setupMainLogger() {
 // - 配布時: 初回起動時に `<userData>/.env` を作成（存在しなければ `.env` または `.env.example` をコピー）
 // - Electron と Python（Chainlit/Electron API）の双方が同じ .env を参照できるよう、パスを一元化
 function ensureUserEnvFile() {
-    const userDataDir = app.getPath('userData');
-    const targetEnv = path.join(userDataDir, '.env');
-
-    try {
-        // すでに存在する場合は何もしない
-        if (fs.existsSync(targetEnv)) {
-            process.env.DOTENV_PATH = targetEnv;
-            return targetEnv;
-        }
-
-        // サンプルテンプレート（最終フォールバック用）
-        const defaultTemplate = `# Chainlit / Electron 共通設定 (サンプル)
-# 生成場所: ${targetEnv}
-
-# OpenAI API
-OPENAI_API_KEY=
-DEFAULT_MODEL=gpt-4o-mini
-
-# Chainlit 認証
-CHAINLIT_AUTH_SECRET=
-
-# オプション: ベクトルストアIDなど
-# COMPANY_VECTOR_STORE_ID=
-
-# その他アプリ設定（必要に応じて追記）
-`;
-
-        // 開発 or 配布のテンプレート候補を作成
-        const cwdEnv = path.join(process.cwd(), '.env');
-        const cwdEnvExample = path.join(process.cwd(), '.env.example');
-        const resourceEnv = app.isPackaged ? path.join(process.resourcesPath, '.env') : null;
-        const resourceEnvExample = app.isPackaged ? path.join(process.resourcesPath, '.env.example') : null;
-        const resourceBackendEnvExample = app.isPackaged ? path.join(process.resourcesPath, 'python-backend', '.env.example') : null;
-
-        // パッケージ環境では .env.example を優先（秘密情報の同梱を避ける）
-        const candidateOrder = app.isPackaged
-            ? [resourceEnvExample, resourceBackendEnvExample, resourceEnv, cwdEnvExample, cwdEnv]
-            : [cwdEnv, cwdEnvExample, resourceEnv, resourceEnvExample];
-
-        const src = candidateOrder.find(p => {
-            try { return p && fs.existsSync(p); } catch { return false; }
-        });
-
-        // userData 配下に.envを作成（テンプレートが無ければサンプルを生成）
-        fs.mkdirSync(userDataDir, { recursive: true });
-        if (src) {
-            try {
-                fs.copyFileSync(src, targetEnv);
-            } catch (copyErr) {
-                console.warn('Failed to copy .env template, writing default sample:', copyErr);
-                fs.writeFileSync(targetEnv, defaultTemplate, 'utf-8');
-            }
-        } else {
-            fs.writeFileSync(targetEnv, defaultTemplate, 'utf-8');
-        }
-
-        process.env.DOTENV_PATH = targetEnv;
-        return targetEnv;
-    } catch (e) {
-        console.error('Failed to ensure user .env file:', e);
-        return null;
-    }
+    const { envPath } = ensureLocalEnvAndConfig();
+    process.env.DOTENV_PATH = envPath;
+    return envPath;
 }
 
 class ChainlitIntegratedManager {
@@ -247,6 +262,7 @@ class ChainlitIntegratedManager {
         const env = {
             ...process.env,
             PYTHONUNBUFFERED: '1',
+            PYTHONDONTWRITEBYTECODE: '1',
             CHAINLIT_CONFIG_PATH: path.join(pythonBackendDir, '.chainlit', 'config.toml'),
             DOTENV_PATH: process.env.DOTENV_PATH || '',
             ELECTRON_VERSION: process.versions.electron || '',
@@ -288,7 +304,9 @@ class ChainlitIntegratedManager {
         console.log('🚀 Chainlit サーバーを起動中...');
         let command;
         let args;
-        let cwd = pythonBackendDir;
+        // DBや履歴はユーザーデータ配下に作成させる
+        const { installDir, localChainlitDir } = ensureLocalEnvAndConfig();
+        let cwd = installDir;
         const chainlitPort = String(process.env.CHAINLIT_PORT || '8000');
         const chainlitHost = String(process.env.CHAINLIT_HOST || '127.0.0.1');
         if (app.isPackaged && pythonDist) {
@@ -301,7 +319,7 @@ class ChainlitIntegratedManager {
         this.chainlitProcess = spawn(command, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
             cwd,
-            env: this.buildPythonEnv()
+            env: this.buildPythonEnv({ CHAINLIT_CONFIG_PATH: path.join(localChainlitDir, 'config.toml') })
         });
         this.pythonProcess = this.chainlitProcess; // for backward compat on shutdown
         // ログ出力
@@ -334,7 +352,9 @@ class ChainlitIntegratedManager {
         console.log('📡 Electron API サーバーを起動中...');
         let command;
         let args;
-        let cwd = pythonBackendDir;
+        // ユーザーデータ配下で実行（一時ファイル等の書き込み先を確保）
+        const { installDir: installDir2, localChainlitDir: localChainlitDir2 } = ensureLocalEnvAndConfig();
+        let cwd = installDir2;
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
             args = [path.join(pythonBackendDir, 'electron_api.py')];
@@ -345,7 +365,7 @@ class ChainlitIntegratedManager {
         this.apiProcess = spawn(command, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
             cwd,
-            env: this.buildPythonEnv()
+            env: this.buildPythonEnv({ CHAINLIT_CONFIG_PATH: path.join(localChainlitDir2, 'config.toml') })
         });
         // ログ出力
         try {
@@ -485,6 +505,18 @@ app.whenReady().then(async () => {
         // ロガー初期化
         const { dir: logDir } = setupMainLogger();
         console.log('📁 Log directory:', logDir);
+
+        // EXE隣に配置する前提のため、書き込み可否をチェック
+        const { installDir } = ensureLocalEnvAndConfig();
+        if (!isDirWritable(installDir)) {
+            const { dialog } = require('electron');
+            await dialog.showErrorBox(
+                '書き込みできません',
+                `インストール先に書き込み権限がありません。\n\n場所: ${installDir}\n\nポータブル配布では、デスクトップ/ドキュメント等の書き込み可能なフォルダへ配置してから実行してください。`
+            );
+            app.quit();
+            return;
+        }
 
         // 共有 .env の用意（ユーザーが編集可能な場所）
         const dotenvPath = ensureUserEnvFile();

@@ -8,6 +8,7 @@
 - Python バックエンドは Electron Main から spawn されます。
 - ポートは `.env` で設定可能です（`CHAINLIT_PORT` 既定 8000、`ELECTRON_API_PORT` 既定 8001）。
 - ログは `<UserData>/logs` に保存され、UI から閲覧できます。
+- 履歴DB（SQLite）と `.env` は「EXEと同じディレクトリ」に作成されます（初回起動時にテンプレをコピーします）。
 
 ## 前提条件（Windows）
 - Node.js 18 以上（x64）
@@ -25,12 +26,24 @@
    - `.env.example` を `.env` にコピー
    - `OPENAI_API_KEY`、`CHAINLIT_AUTH_SECRET`、`DEFAULT_MODEL` を設定
    - 必要に応じて `CHAINLIT_PORT`、`ELECTRON_API_PORT` も調整
-4. `python_dist/` の作成（埋め込み Python）
+4. `python_dist/` の作成（埋め込み Python・軽量化対応）
    - PowerShell で `scripts/build_python_dist.ps1` を実行
-   - `python_dist/` に `python.exe` と必要な site-packages が配置されます
-5. パッケージ作成
-   - `npm run build:win`（electron-builder）
-   - 生成物は `dist/` に出力されます
+   - スクリプトは以下の最適化を自動実行します:
+     - pip を `--no-cache-dir --no-compile` で実行（ビルド時キャッシュ/pycを生成しない）
+     - 可能な限り wheel を採用（`--only-binary=:all:`）
+     - `pip/setuptools/wheel` 本体および関連 `*.dist-info` を削除（実行時に不要）
+     - `tests/`, `testing/`, `__pycache__/`, `*.pyc` を削除
+   - `python_dist/` に `python.exe` と必要最小の site-packages が配置されます
+5. パッケージ作成（軽量化設定込み）
+   - `npm run build:portable`（portable EXE + ZIPを生成）
+   - 本プロジェクトの `package.json` は以下を設定済み:
+     - `asar: true`（JS リソースを asar で圧縮）
+     - `asarUnpack` に `python_dist/**`, `python-backend/**`（Python 実行には展開が必要）
+     - `.chainlit` は `config.toml` と `personas/` のみ同梱（SQLite や `vector_stores` は同梱しない）
+     - `__pycache__` と `*.pyc` は同梱対象から除外
+   - 生成物は `dist/` に出力されます（例: `...portable.exe` / `...-win.zip`）
+
+注意: EXEと同じディレクトリにデータを書き込むため、配置先に書き込み権限が必要です。`Program Files` 直下は避け、ユーザーの書き込み可能なフォルダ（デスクトップ/ドキュメント配下など）でZIPを展開してください。
 
 ## 検証項目
 - パッケージ実行時に以下を確認:
@@ -43,3 +56,4 @@
 - ポート競合 → `.env` のポートを変更して再試行
 - 依存不足 → `uv pip install -r requirements.in` を実行して再パッケージ
 - OpenAI エラー → API キーと既定モデルを確認
+ - Chainlit が pyc を生成してしまう → パッケージでは `PYTHONDONTWRITEBYTECODE=1` を設定済み（Electron から環境変数注入）。

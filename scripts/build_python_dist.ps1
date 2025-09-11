@@ -35,8 +35,39 @@ ensurepip.bootstrap()
 print('Bootstrapped pip:', sys.version)
 PY
 
-# 5) Upgrade pip and install deps
-& $py -m pip install --upgrade pip
-& $py -m pip install chainlit fastapi uvicorn openai python-dotenv tenacity
+# 5) Upgrade pip and install deps without cache/bytecode
+#    - --no-cache-dir: avoid writing to user cache
+#    - --prefer-binary/--only-binary: prefer wheels when available
+#    - --no-compile: avoid creating .pyc at build time (we also set
+#      PYTHONDONTWRITEBYTECODE at runtime from Electron)
+& $py -m pip install --upgrade pip --no-cache-dir --prefer-binary --only-binary=:all:
+& $py -m pip install --no-cache-dir --prefer-binary --only-binary=:all: --no-compile `
+    chainlit fastapi uvicorn openai python-dotenv tenacity
+
+# 6) Prune unnecessary files to reduce size
+$site = Join-Path (Split-Path $py -Parent) "Lib/site-packages"
+Write-Host "Pruning site-packages at $site ..."
+
+function Remove-IfExists($path) { if (Test-Path $path) { Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue } }
+
+# Remove pip/setuptools/wheel (not needed at runtime)
+Get-ChildItem -Path $site -Directory -Filter "pip*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
+Get-ChildItem -Path $site -Directory -Filter "setuptools*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
+Get-ChildItem -Path $site -Directory -Filter "wheel*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
+Get-ChildItem -Path $site -Directory -Filter "pkg_resources*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
+
+# Remove tests and __pycache__ from installed packages
+Get-ChildItem -Path $site -Recurse -Directory -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -in @("tests","testing","__pycache__") } |
+  ForEach-Object { Remove-IfExists $_.FullName }
+
+# Remove stray *.pyc / *.pyo files
+Get-ChildItem -Path $site -Recurse -Include *.pyc,*.pyo -File -ErrorAction SilentlyContinue |
+  ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+
+# Optional: trim dist-info metadata for tooling we just removed
+Get-ChildItem -Path $site -Directory -Filter "pip-*.dist-info" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
+Get-ChildItem -Path $site -Directory -Filter "setuptools-*.dist-info" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
+Get-ChildItem -Path $site -Directory -Filter "wheel-*.dist-info" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
 
 Write-Host "python_dist is ready: $DistDir"

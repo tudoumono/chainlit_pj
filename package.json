@@ -11,8 +11,9 @@
     "electron": "electron . --no-sandbox",
     "dev": "electron . --no-sandbox",
     "start": "npm run dev",
-    "build": "electron-builder --win",
-    "build:win": "electron-builder --win",
+    "build": "electron-builder --win portable zip",
+    "build:win": "electron-builder --win portable zip",
+    "build:portable": "electron-builder --win portable zip",
     "dist": "npm run build",
     "postinstall": "electron-builder install-app-deps",
     "pack": "electron-builder --dir",
@@ -40,9 +41,8 @@
     "files": [
       "electron/**/*",
       "renderer/**/*",
-      "*.py",
+      "!*.py",
       "utils/**/*",
-      ".chainlit/**/*",
       ".env.example",
       "requirements.in",
       "pyproject.toml",
@@ -50,7 +50,10 @@
         "from": ".",
         "filter": [
           "package.json",
-          "README.md"
+          "README.md",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo"
         ]
       }
     ],
@@ -64,23 +67,33 @@
           "electron_api.py",
           "handlers/**/*",
           "utils/**/*",
-          ".chainlit/**/*",
+          ".chainlit/config.toml",
+          ".chainlit/personas/**",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo",
           "requirements.in",
           "pyproject.toml",
           ".env.example"
         ]
       }
     ],
+    "asar": true,
+    "asarUnpack": [
+      "python_dist/**",
+      "python-backend/**"
+    ],
+    "compression": "maximum",
     "win": {
       "target": [
         {
-          "target": "nsis",
+          "target": "portable",
           "arch": [
             "x64"
           ]
         },
         {
-          "target": "portable",
+          "target": "zip",
           "arch": [
             "x64"
           ]
@@ -91,18 +104,7 @@
       "requestedExecutionLevel": "asInvoker",
       "publisherName": "Chainlit AI Workspace Team"
     },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico",
-      "deleteAppDataOnUninstall": true,
-      "license": "LICENSE",
-      "language": "2052"
-    },
+    
     "dmg": {
       "title": "${productName} ${version}",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",

@@ -10,10 +10,16 @@ Windows 環境でのみ実施する必要がある作業をリストアップし
   - `python_dist/` に展開
   - `pythonXX._pth` を編集し `import site` を有効化
   - `python_dist/Lib/site-packages` に最小依存（chainlit, fastapi, uvicorn, openai, python-dotenv など）をインストール
+    - pip は `--no-cache-dir --no-compile` で実行
+    - インストール後に `pip/setuptools/wheel`, `tests/`, `testing/`, `__pycache__/`, `*.pyc` を削除
 
-## 2) electron-builder でパッケージ（Windows）
-- `npm run build:win`
-- 生成物は `dist/` に出力されます
+## 2) electron-builder でパッケージ（Windows / portable 配布）
+- `npm run build:portable`
+- 生成物は `dist/` に出力されます（portable EXE と ZIP）
+- `.chainlit` は `config.toml` と `personas/` のみ同梱（SQLite/ベクトルDBは実行時に生成/クラウド）
+- 実行時のデータ（`.env`, `.chainlit/chainlit.db`）は「EXEと同じディレクトリ」に作成されます。
+  - 配置先に書き込み権限が必要です。
+  - `Program Files` 直下など、管理者権限が必要なフォルダは避けてください。
 
 ## 3) パッケージのスモークテスト
 - アプリを起動
