@@ -190,6 +190,10 @@ class ChainlitIntegratedManager {
         this.pythonProcess = null; // backward compat (will hold chainlitProcess)
         this.chainlitProcess = null;
         this.apiProcess = null;
+        this.chainlitLastExit = null;
+        this.apiLastExit = null;
+        this.chainlitSpawnError = null;
+        this.apiSpawnError = null;
         const chainlitPort = process.env.CHAINLIT_PORT || '8000';
         const chainlitHost = process.env.CHAINLIT_HOST || '127.0.0.1';
         const apiPort = process.env.ELECTRON_API_PORT || '8001';
@@ -331,7 +335,14 @@ class ChainlitIntegratedManager {
         } catch {}
         this.chainlitProcess.stdout.on('data', (d) => console.log('🐍 Chainlit:', d.toString()));
         this.chainlitProcess.stderr.on('data', (d) => console.error('🔴 Chainlit:', d.toString()));
-        this.chainlitProcess.on('close', (code) => console.log(`🛑 Chainlit exited: ${code}`));
+        this.chainlitProcess.on('error', (err) => {
+            this.chainlitSpawnError = String(err && err.message ? err.message : err);
+            console.error('❌ Chainlit spawn error:', this.chainlitSpawnError);
+        });
+        this.chainlitProcess.on('close', (code) => {
+            this.chainlitLastExit = code;
+            console.log(`🛑 Chainlit exited: ${code}`);
+        });
         return true;
     }
 
@@ -376,7 +387,14 @@ class ChainlitIntegratedManager {
         } catch {}
         this.apiProcess.stdout.on('data', (d) => console.log('📡 Electron API:', d.toString()));
         this.apiProcess.stderr.on('data', (d) => console.error('🔴 Electron API:', d.toString()));
-        this.apiProcess.on('close', (code) => console.log(`🛑 Electron API exited: ${code}`));
+        this.apiProcess.on('error', (err) => {
+            this.apiSpawnError = String(err && err.message ? err.message : err);
+            console.error('❌ Electron API spawn error:', this.apiSpawnError);
+        });
+        this.apiProcess.on('close', (code) => {
+            this.apiLastExit = code;
+            console.log(`🛑 Electron API exited: ${code}`);
+        });
         return true;
     }
 
@@ -421,10 +439,54 @@ class ChainlitIntegratedManager {
         }
 
         if (!chainlitReady || !electronApiReady) {
-            throw new Error('Failed to start Python servers');
+            await this.writeStartupDiagnostics();
+            const reasons = [];
+            if (!chainlitReady) reasons.push('Chainlit not reachable');
+            if (!electronApiReady) reasons.push('Electron API not reachable');
+            throw new Error(`Failed to start Python servers (${reasons.join(', ')})`);
         }
-
+    
         console.log('🎉 全サーバーの起動が完了しました');
+    }
+
+    async writeStartupDiagnostics() {
+        try {
+            const dir = ensureLogDir();
+            const diagPath = path.join(dir, 'startup_diagnostics.txt');
+            const { baseDir, pythonDist, pythonBackendDir } = this.getPaths();
+            const exists = (p) => { try { return fs.existsSync(p); } catch { return false; } };
+            const readTail = (p, n = 100) => {
+                try {
+                    if (!exists(p)) return '';
+                    const data = fs.readFileSync(p, 'utf-8').split(/\r?\n/);
+                    return data.slice(-n).join('\n');
+                } catch { return ''; }
+            };
+            const payload = [
+                `timestamp=${new Date().toISOString()}`,
+                `app.isPackaged=${app.isPackaged}`,
+                `baseDir=${baseDir}`,
+                `pythonDist=${pythonDist}`,
+                `pythonDist.exists=${pythonDist ? exists(pythonDist) : false}`,
+                `pythonBackendDir=${pythonBackendDir}`,
+                `pythonBackendDir.exists=${exists(pythonBackendDir)}`,
+                `DOTENV_PATH=${process.env.DOTENV_PATH || ''}`,
+                `CHAINLIT_CONFIG_PATH=${process.env.CHAINLIT_CONFIG_PATH || ''}`,
+                `PATH.head=${(process.env.PATH || '').slice(0, 256)}`,
+                `chainlitLastExit=${this.chainlitLastExit} spawnErr=${this.chainlitSpawnError || ''}`,
+                `apiLastExit=${this.apiLastExit} spawnErr=${this.apiSpawnError || ''}`,
+                '',
+                '--- tail: chainlit.err.log ---',
+                readTail(path.join(dir, 'chainlit.err.log')),
+                '',
+                '--- tail: electron-api.err.log ---',
+                readTail(path.join(dir, 'electron-api.err.log')),
+            ].join('\n');
+            fs.writeFileSync(diagPath, payload, 'utf-8');
+            console.log('📝 Wrote startup diagnostics to', diagPath);
+        } catch (e) {
+            console.error('Failed to write diagnostics:', e);
+        }
     }
 
     async callElectronAPI(endpoint, method = 'GET', data = null) {
@@ -570,12 +632,14 @@ app.whenReady().then(async () => {
         
     } catch (error) {
         console.error('❌ アプリケーションの起動に失敗:', error);
-        
+        try { await chainlitManager.writeStartupDiagnostics(); } catch {}
         // エラーダイアログを表示後、アプリを終了
         const { dialog } = require('electron');
+        const logDir = ensureLogDir();
         await dialog.showErrorBox('起動エラー', 
-            `アプリケーションの起動に失敗しました:\n${error.message}\n\n必要な依存関係がインストールされているか確認してください。`
-        );
+            `アプリケーションの起動に失敗しました:\n${error.message}\n\n` +
+            `ログを確認してください:\n${logDir}\n` +
+            `- main.log\n- chainlit.out.log / chainlit.err.log\n- electron-api.out.log / electron-api.err.log\n- startup_diagnostics.txt\n`);
         app.quit();
     }
 });
