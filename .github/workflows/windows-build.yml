@@ -1,17 +1,7 @@
 name: Windows Build
 on:
+  # Manual only. Disable automatic triggers.
   workflow_dispatch:
-  push:
-    branches: [ master ]
-    paths:
-      - 'electron/**'
-      - 'renderer/**'
-      - 'app.py'
-      - 'electron_api.py'
-      - 'package.json'
-      - '.chainlit/**'
-      - 'scripts/**'
-      - 'docs/**'
 
 jobs:
   build-win:
