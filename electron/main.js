@@ -51,8 +51,7 @@ function loadEnvFileIntoProcess(targetEnvPath) {
     try {
         if (!targetEnvPath) return;
         const raw = fs.readFileSync(targetEnvPath, "utf-8");
-        raw.split(/?
-/).forEach((line) => {
+        raw.split(/\r?\n/).forEach((line) => {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith('#')) return;
             const idx = trimmed.indexOf('=');
