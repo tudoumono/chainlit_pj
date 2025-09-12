@@ -29,11 +29,12 @@ if ($null -ne $pth) {
 
 # 4) Create site-packages and install minimal wheels via pip bootstrap
 $py = Join-Path $DistDir "python.exe"
-& $py - << 'PY'
+# PowerShell doesn't support Bash-style here-docs. Use a here-string piped to Python stdin.
+@'
 import ensurepip, sys
 ensurepip.bootstrap()
-print('Bootstrapped pip:', sys.version)
-PY
+print("Bootstrapped pip:", sys.version)
+'@ | & $py -
 
 # 5) Upgrade pip and install deps without cache/bytecode
 #    - --no-cache-dir: avoid writing to user cache
