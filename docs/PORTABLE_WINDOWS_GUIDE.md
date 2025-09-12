@@ -40,7 +40,6 @@ title: Chainlit AI Workspace — Windows配布手順（Portable版・一枚ま�
 ## 7) 管理者/配布担当向け（ビルド）
 - portable/zip 生成: `npm run build:portable`
 - 生成物: `dist/` に portable EXE と ZIP が出力
-- 詳細: `docs/WINDOWS_PACKAGING.md` / `docs/WINDOWS_TASKS.md`
+- 詳細: `docs/WINDOWS_PACKAGING.md`
 
 （PDF化の方法）このMarkdownをブラウザ拡張や社内ツールでPDF出力するか、同梱のHTML版 `docs/PORTABLE_WINDOWS_GUIDE.html` をブラウザで開いて「印刷→PDF」で保存してください。
-

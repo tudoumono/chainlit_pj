@@ -4,6 +4,15 @@
 
 重要: Windows 固有の作業は、Windows マシン上でリポジトリをクローンしてから実施してください。
 
+## Quick Steps（再ビルド用）
+- PowerShell を管理者不要で実行:
+  - `pwsh -ExecutionPolicy Bypass -File scripts/build_python_dist.ps1`
+- パッケージ生成（portable EXE + ZIP）:
+  - `npm run build:portable`
+- 起動失敗時のログ/診断:
+  - ログ: `<UserData>/logs`（`main.log`, `chainlit.err.log`, `electron-api.err.log`）
+  - 診断: `<UserData>/logs/startup_diagnostics.txt`
+
 ## 概要
 - Python バックエンドは Electron Main から spawn されます。
 - ポートは `.env` で設定可能です（`CHAINLIT_PORT` 既定 8000、`ELECTRON_API_PORT` 既定 8001）。
