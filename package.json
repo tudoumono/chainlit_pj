@@ -142,8 +142,5 @@
     "desktop",
     "chat",
     "assistant"
-  ],
-  "directories": {
-    "doc": "docs"
-  }
+  ]
 }
