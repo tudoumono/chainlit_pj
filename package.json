@@ -101,8 +101,7 @@
       ],
       "icon": "build/icon.ico",
       "artifactName": "${productName}-${version}-windows-${arch}.${ext}",
-      "requestedExecutionLevel": "asInvoker",
-      "publisherName": "Chainlit AI Workspace Team"
+      "requestedExecutionLevel": "asInvoker"
     },
     
     "dmg": {
