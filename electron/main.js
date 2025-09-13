@@ -69,10 +69,11 @@ function loadEnvFileIntoProcess(targetEnvPath) {
 function getLogDir() {
     try {
         if (process.env.LOG_DIR) return process.env.LOG_DIR;
-        const userData = app.getPath('userData');
-        return path.join(userData, 'logs');
+        // Place logs next to the EXE (portable-friendly default)
+        const installDir = getInstallDir();
+        return path.join(installDir, 'logs');
     } catch {
-        return path.join(process.cwd(), 'Log');
+        return path.join(process.cwd(), 'logs');
     }
 }
 

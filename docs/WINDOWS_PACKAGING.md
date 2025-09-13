@@ -10,13 +10,13 @@
 - パッケージ生成（portable EXE + ZIP）:
   - `npm run build:portable`
 - 起動失敗時のログ/診断:
-  - ログ: `<UserData>/logs`（`main.log`, `chainlit.err.log`, `electron-api.err.log`）
-  - 診断: `<UserData>/logs/startup_diagnostics.txt`
+  - ログ: `EXE と同じディレクトリ/logs`（`main.log`, `chainlit.err.log`, `electron-api.err.log`）
+  - 診断: `EXE と同じディレクトリ/logs/startup_diagnostics.txt`
 
 ## 概要
 - Python バックエンドは Electron Main から spawn されます。
 - ポートは `.env` で設定可能です（`CHAINLIT_PORT` 既定 8000、`ELECTRON_API_PORT` 既定 8001）。
-- ログは `<UserData>/logs` に保存され、UI から閲覧できます。
+- ログは「EXE と同じディレクトリ/logs」に保存され、UI から閲覧できます。
 - 履歴DB（SQLite）と `.env` は「EXEと同じディレクトリ」に作成されます（初回起動時にテンプレをコピーします）。
 
 ## 前提条件（Windows）
@@ -67,7 +67,7 @@
 - 依存不足 → `uv pip install -r requirements.in` を実行して再パッケージ
 - OpenAI エラー → API キーと既定モデルを確認
  - Chainlit が pyc を生成してしまう → パッケージでは `PYTHONDONTWRITEBYTECODE=1` を設定済み（Electron から環境変数注入）。
- - 「Failed to start Python servers」 → `<UserData>/logs/startup_diagnostics.txt` と `chainlit.err.log`/`electron-api.err.log` を確認
+- 「Failed to start Python servers」 → `EXE と同じディレクトリ/logs/startup_diagnostics.txt` と `chainlit.err.log`/`electron-api.err.log` を確認
 
 ## 補足: アイコンと署名
 - `build/icon.ico` が無い場合は Electron 既定アイコンになります（ログに警告が出ますが問題ありません）。
