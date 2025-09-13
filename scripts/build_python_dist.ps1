@@ -22,9 +22,12 @@ if (Test-Path $DistDir) { Remove-Item $DistDir -Recurse -Force }
 Expand-Archive -Path $zipPath -DestinationPath $DistDir
 
 # 3) Enable site-packages (edit _pth)
-$pth = Get-ChildItem $DistDir -Filter "python*.pth" | Select-Object -First 1
+#   Embeddable Python uses e.g. python310._pth (note the leading underscore)
+$pth = Get-ChildItem $DistDir -Filter "python*._pth" | Select-Object -First 1
 if ($null -ne $pth) {
   (Get-Content $pth.FullName) | ForEach-Object { $_ -replace "^#import site$","import site" } | Set-Content $pth.FullName -Encoding UTF8
+} else {
+  Write-Warning "_pth file not found under $DistDir; site-packages may not be enabled."
 }
 
 # 4) Create site-packages and bootstrap pip for embeddable Python

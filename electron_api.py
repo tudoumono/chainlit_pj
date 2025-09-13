@@ -1017,8 +1017,7 @@ async def get_system_logs():
         for fpath in files:
             lst = tail_lines(fpath, 50)
             if lst:
-                logs.append(f"===== {os.path.basename(fpath)} =====
-")
+                logs.append(f"===== {os.path.basename(fpath)} =====\n")
                 logs.extend(lst)
                 if not lst[-1].endswith('
 '):
