@@ -269,6 +269,10 @@ class ChainlitIntegratedManager {
             ...process.env,
             PYTHONUNBUFFERED: '1',
             PYTHONDONTWRITEBYTECODE: '1',
+            // Windows の cp932 で絵文字や一部Unicodeが出力できず logging で UnicodeEncodeError が出るため
+            // Python 側の標準入出力を UTF-8 固定にする
+            PYTHONIOENCODING: 'utf-8',
+            PYTHONUTF8: '1',
             CHAINLIT_CONFIG_PATH: path.join(pythonBackendDir, '.chainlit', 'config.toml'),
             // For compatibility with older Chainlit builds that require a project id when public=false
             // we force public mode in packaged runtime to avoid startup failure.
