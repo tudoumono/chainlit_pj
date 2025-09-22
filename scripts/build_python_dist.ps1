@@ -62,11 +62,9 @@ Write-Host "Pruning site-packages at $site ..."
 
 function Remove-IfExists($path) { if (Test-Path $path) { Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue } }
 
-# Remove pip/setuptools/wheel (not needed at runtime)
+# Remove pip and wheel (keep setuptools/pkg_resources, required by some deps like gevent)
 Get-ChildItem -Path $site -Directory -Filter "pip*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
-Get-ChildItem -Path $site -Directory -Filter "setuptools*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
 Get-ChildItem -Path $site -Directory -Filter "wheel*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
-Get-ChildItem -Path $site -Directory -Filter "pkg_resources*" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
 
 # Remove tests and __pycache__ from installed packages
 Get-ChildItem -Path $site -Recurse -Directory -ErrorAction SilentlyContinue |
@@ -77,9 +75,8 @@ Get-ChildItem -Path $site -Recurse -Directory -ErrorAction SilentlyContinue |
 Get-ChildItem -Path $site -Recurse -Include *.pyc,*.pyo -File -ErrorAction SilentlyContinue |
   ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
 
-# Optional: trim dist-info metadata for tooling we just removed
+# Optional: trim dist-info metadata for tooling we removed
 Get-ChildItem -Path $site -Directory -Filter "pip-*.dist-info" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
-Get-ChildItem -Path $site -Directory -Filter "setuptools-*.dist-info" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
 Get-ChildItem -Path $site -Directory -Filter "wheel-*.dist-info" -ErrorAction SilentlyContinue | ForEach-Object { Remove-IfExists $_.FullName }
 
 Write-Host "python_dist is ready: $DistDir"
