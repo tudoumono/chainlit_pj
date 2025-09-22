@@ -45,11 +45,11 @@ function Install-With-Uv($target) {
     # Prefer requirements.in to stay in sync with the repo
     $req = Join-Path $PWD 'requirements.in'
     if (Test-Path $req) {
-      uv pip install -r $req --target "$target" --no-cache-dir --no-compile --prefer-binary --only-binary=:all:
+      # uv pip のサポートオプションに合わせる（--requirements / --target / --no-cache のみ）
+      uv pip install --requirements $req --target "$target" --no-cache
     } else {
       # Minimal fallback set aligned with the app
-      uv pip install chainlit openai python-dotenv tenacity fastapi uvicorn --target "$target" `
-        --no-cache-dir --no-compile --prefer-binary --only-binary=:all:
+      uv pip install chainlit openai python-dotenv tenacity fastapi uvicorn --target "$target" --no-cache
     }
     return $true
   } catch {

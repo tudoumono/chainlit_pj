@@ -38,8 +38,9 @@
 4. `python_dist/` の作成（埋め込み Python・軽量化対応）
    - PowerShell で `scripts/build_python_dist.ps1 -UseUv` を実行（uv が無い場合は自動的に pip ブートストラップに切替）
    - スクリプトは以下の最適化を自動実行します:
-     - 可能なら uv を使用して `requirements.in` を `Lib/site-packages` にインストール（`--no-cache-dir --no-compile --prefer-binary --only-binary=:all:`）
-     - uv が無い場合は、公式 `pip.pyz` を用いて embeddable に pip をブートストラップ後、同等オプションでインストール
+     - 可能なら uv を使用して `requirements.in` を `Lib/site-packages` にインストール（`--no-cache` のみ使用。その他の pip フラグは未対応）
+     - uv が無い場合は、公式 `pip.pyz` を用いて embeddable に pip をブートストラップ後、`--no-cache-dir --no-compile --prefer-binary --only-binary=:all:` でインストール
+     - 実行時は Electron 側で `PYTHONDONTWRITEBYTECODE=1` を設定、ビルド後に `*.pyc` はスクリプトで削除
      - `pip/setuptools/wheel` 本体および関連 `*.dist-info` を削除（実行時に不要）
      - `tests/`, `testing/`, `__pycache__/`, `*.pyc` を削除
    - `python_dist/` に `python.exe` と必要最小の site-packages が配置されます
