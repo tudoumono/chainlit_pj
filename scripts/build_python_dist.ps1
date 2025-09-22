@@ -2,7 +2,8 @@
 # Run on Windows PowerShell.
 param(
   [string]$PythonVersion = "3.10.11",
-  [string]$DistDir = "python_dist"
+  [string]$DistDir = "python_dist",
+  [switch]$UseUv = $true
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,32 +31,64 @@ if ($null -ne $pth) {
   Write-Warning "_pth file not found under $DistDir; site-packages may not be enabled."
 }
 
-# 4) Create site-packages and bootstrap pip for embeddable Python
+# 4) Create site-packages and (prefer) uv to install deps
 $py = Join-Path $DistDir "python.exe"
 $pyHome = Split-Path $py -Parent
 $site = Join-Path $pyHome "Lib/site-packages"
 if (!(Test-Path $site)) { New-Item -ItemType Directory -Path $site | Out-Null }
 
-# Note: Windows embeddable Python doesn't include ensurepip/pip by design.
-# Use pip's official zipapp (pip.pyz) to bootstrap into our site-packages.
-$pipPyz = Join-Path $env:TEMP "pip.pyz"
-if (!(Test-Path $pipPyz)) {
-  Write-Host "Downloading pip.pyz ..."
-  Invoke-WebRequest -Uri "https://bootstrap.pypa.io/pip/pip.pyz" -OutFile $pipPyz
+function Install-With-Uv($target) {
+  try {
+    $hasUv = Get-Command uv -ErrorAction SilentlyContinue
+    if (-not $hasUv) { return $false }
+    Write-Host "Installing deps with uv into $target ..."
+    # Prefer requirements.in to stay in sync with the repo
+    $req = Join-Path $PWD 'requirements.in'
+    if (Test-Path $req) {
+      uv pip install -r $req --target "$target" --no-cache-dir --no-compile --prefer-binary --only-binary=:all:
+    } else {
+      # Minimal fallback set aligned with the app
+      uv pip install chainlit openai python-dotenv tenacity fastapi uvicorn --target "$target" `
+        --no-cache-dir --no-compile --prefer-binary --only-binary=:all:
+    }
+    return $true
+  } catch {
+    Write-Warning "uv installation failed: $_"
+    return $false
+  }
 }
 
-Write-Host "Bootstrapping pip into $site ..."
-& $py $pipPyz install --no-cache-dir --no-compile --target "$site" pip setuptools wheel
-Write-Host "Bootstrapped pip."
+function Bootstrap-Pip-And-Install($pythonExe, $target) {
+  # Embeddable Python lacks ensurepip; use pip.pyz to bootstrap
+  $pipPyz = Join-Path $env:TEMP "pip.pyz"
+  if (!(Test-Path $pipPyz)) {
+    Write-Host "Downloading pip.pyz ..."
+    Invoke-WebRequest -Uri "https://bootstrap.pypa.io/pip/pip.pyz" -OutFile $pipPyz
+  }
+  Write-Host "Bootstrapping pip into $target ..."
+  & $pythonExe $pipPyz install --no-cache-dir --no-compile --target "$target" pip setuptools wheel
+  Write-Host "Bootstrapped pip."
+  # Use pip (from the embedded target) to install deps into target
+  # Note: call the interpreter with -m pip and specify --target again
+  & $pythonExe -m pip install --upgrade pip --no-cache-dir --prefer-binary --only-binary=:all:
+  $req = Join-Path $PWD 'requirements.in'
+  if (Test-Path $req) {
+    & $pythonExe -m pip install --no-cache-dir --prefer-binary --only-binary=:all: --no-compile `
+      -r $req --target "$target"
+  } else {
+    & $pythonExe -m pip install --no-cache-dir --prefer-binary --only-binary=:all: --no-compile `
+      chainlit openai python-dotenv tenacity fastapi uvicorn --target "$target"
+  }
+}
 
-# 5) Upgrade pip and install deps without cache/bytecode
-#    - --no-cache-dir: avoid writing to user cache
-#    - --prefer-binary/--only-binary: prefer wheels when available
-#    - --no-compile: avoid creating .pyc at build time (we also set
-#      PYTHONDONTWRITEBYTECODE at runtime from Electron)
-& $py -m pip install --upgrade pip --no-cache-dir --prefer-binary --only-binary=:all:
-& $py -m pip install --no-cache-dir --prefer-binary --only-binary=:all: --no-compile `
-    chainlit fastapi uvicorn openai python-dotenv tenacity
+# Try uv first (if requested); fallback to pip bootstrap
+$installed = $false
+if ($UseUv) {
+  $installed = Install-With-Uv -target $site
+}
+if (-not $installed) {
+  Bootstrap-Pip-And-Install -pythonExe $py -target $site
+}
 
 # 6) Prune unnecessary files to reduce size
 Write-Host "Pruning site-packages at $site ..."
