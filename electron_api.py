@@ -991,16 +991,10 @@ async def get_system_logs():
     """システムログ取得（<userData>/logs および従来の .chainlit/app.log を統合）"""
     try:
         import os
-        import itertools
-        import io
         log_dir = os.getenv('LOG_DIR') or ''
         files = []
         if log_dir and os.path.isdir(log_dir):
-            for name in [
-                'main.log',
-                'chainlit.out.log', 'chainlit.err.log',
-                'electron-api.out.log', 'electron-api.err.log'
-            ]:
+            for name in ['main.log', 'chainlit.out.log', 'chainlit.err.log', 'electron-api.out.log', 'electron-api.err.log']:
                 p = os.path.join(log_dir, name)
                 if os.path.exists(p):
                     files.append(p)
@@ -1019,55 +1013,8 @@ async def get_system_logs():
             if lst:
                 logs.append(f"===== {os.path.basename(fpath)} =====\n")
                 logs.extend(lst)
-                if not lst[-1].endswith('
-'):
-                    logs.append('
-')
-        # 何もなければ空配列
+                if not lst[-1].endswith('\n'):
+                    logs.append('\n')
         return {"status": "success", "data": {"logs": logs}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-# ファイルエクスポート・インポートエンドポイント
-@app.post("/api/files/export")
-async def export_data(request: Dict[str, Any]):
-    """データエクスポート"""
-    try:
-        data = request.get("data")
-        filename = request.get("filename", "export.json")
-        
-        export_path = f"exports/{filename}"
-        os.makedirs("exports", exist_ok=True)
-        
-        with open(export_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        
-        return {
-            "status": "success", 
-            "data": {"export_path": export_path, "filename": filename}
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-def run_electron_api():
-    """Electron用APIサーバーを起動"""
-    import uvicorn
-    uvicorn.run(
-        app,
-        host=os.getenv("ELECTRON_API_HOST", "127.0.0.1"),
-        port=int(os.getenv("ELECTRON_API_PORT", "8001")),
-        log_level="info",
-        reload=False
-    )
-
-if __name__ == "__main__":
-    run_electron_api()
-
-# ====== System utilities (export/cleanup/reset/test key) ======
-
-class TestOpenAIKeyRequest(BaseModel):
-    api_key: Optional[str] = None
-    model: Optional[str] = None
-
-
-## (duplicate removed) older test-openai-key endpoint deleted
