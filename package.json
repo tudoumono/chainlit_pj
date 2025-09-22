@@ -65,6 +65,8 @@
         "to": "python-backend",
         "filter": [
           "app.py",
+          "auth.py",
+          "data_layer.py",
           "electron_api.py",
           "handlers/**/*",
           "utils/**/*",
