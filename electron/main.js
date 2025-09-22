@@ -119,6 +119,8 @@ function ensureLocalEnvAndConfig() {
             : path.join(process.cwd(), '.chainlit', 'config.toml');
         try { if (fs.existsSync(cfgSrc)) fs.copyFileSync(cfgSrc, cfgDest); } catch {}
     }
+    // Expose in main env for diagnostics visibility
+    try { process.env.CHAINLIT_CONFIG_PATH = cfgDest; } catch {}
 
     const personasDest = path.join(localChainlitDir, 'personas');
     if (!fs.existsSync(personasDest)) {
@@ -268,6 +270,9 @@ class ChainlitIntegratedManager {
             PYTHONUNBUFFERED: '1',
             PYTHONDONTWRITEBYTECODE: '1',
             CHAINLIT_CONFIG_PATH: path.join(pythonBackendDir, '.chainlit', 'config.toml'),
+            // For compatibility with older Chainlit builds that require a project id when public=false
+            // we force public mode in packaged runtime to avoid startup failure.
+            CHAINLIT_PUBLIC: 'true',
             DOTENV_PATH: process.env.DOTENV_PATH || '',
             ELECTRON_VERSION: process.versions.electron || '',
             APP_VERSION: app.getVersion ? app.getVersion() : ''
