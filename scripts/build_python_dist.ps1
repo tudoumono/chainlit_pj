@@ -37,7 +37,7 @@ $pyHome = Split-Path $py -Parent
 $site = Join-Path $pyHome "Lib/site-packages"
 if (!(Test-Path $site)) { New-Item -ItemType Directory -Path $site | Out-Null }
 
-function Install-With-Uv($target) {
+function Install-With-Uv($pythonExe, $target) {
   try {
     $hasUv = Get-Command uv -ErrorAction SilentlyContinue
     if (-not $hasUv) { return $false }
@@ -46,10 +46,11 @@ function Install-With-Uv($target) {
     $req = Join-Path $PWD 'requirements.in'
     if (Test-Path $req) {
       # uv pip のサポートオプションに合わせる（--requirements / --target / --no-cache のみ）
-      uv pip install --requirements $req --target "$target" --no-cache
+      # 重要: --python に埋め込み Python を明示して、プラットフォームタグ/ABI を一致させる
+      uv pip install --python $pythonExe --requirements $req --target "$target" --no-cache
     } else {
       # Minimal fallback set aligned with the app
-      uv pip install chainlit openai python-dotenv tenacity fastapi uvicorn --target "$target" --no-cache
+      uv pip install --python $pythonExe chainlit openai python-dotenv tenacity fastapi uvicorn --target "$target" --no-cache
     }
     return $true
   } catch {
@@ -84,7 +85,7 @@ function Bootstrap-Pip-And-Install($pythonExe, $target) {
 # Try uv first (if requested); fallback to pip bootstrap
 $installed = $false
 if ($UseUv) {
-  $installed = Install-With-Uv -target $site
+  $installed = Install-With-Uv -pythonExe $py -target $site
 }
 if (-not $installed) {
   Bootstrap-Pip-And-Install -pythonExe $py -target $site
