@@ -351,3 +351,5 @@ MIT License
 - Logs are written under `<UserData>/logs` and accessible via Settings.
 
 Windows packaging steps: see `docs/WINDOWS_PACKAGING.md` and `docs/WINDOWS_TASKS.md`.
+
+事前に `python_dist/` を作成するには: `npm run python-dist` を実行してください（内部で `scripts/build_python_dist.ps1 -UseUv` を呼び出します。`uv` が無い場合は自動的に `pip` にフォールバックします）。

@@ -5,8 +5,8 @@
 重要: Windows 固有の作業は、Windows マシン上でリポジトリをクローンしてから実施してください。
 
 ## Quick Steps（再ビルド用）
-- PowerShell を管理者不要で実行:
-  - `pwsh -ExecutionPolicy Bypass -File scripts/build_python_dist.ps1`
+- PowerShell を管理者不要で実行（uv 推奨・自動フォールバックあり）:
+  - `pwsh -ExecutionPolicy Bypass -File scripts/build_python_dist.ps1 -UseUv`
 - パッケージ生成（portable EXE + ZIP）:
   - `npm run build:portable`
 - 起動失敗時のログ/診断:
@@ -36,11 +36,10 @@
    - `OPENAI_API_KEY`、`CHAINLIT_AUTH_SECRET`、`DEFAULT_MODEL` を設定
    - 必要に応じて `CHAINLIT_PORT`、`ELECTRON_API_PORT` も調整
 4. `python_dist/` の作成（埋め込み Python・軽量化対応）
-   - PowerShell で `scripts/build_python_dist.ps1` を実行
+   - PowerShell で `scripts/build_python_dist.ps1 -UseUv` を実行（uv が無い場合は自動的に pip ブートストラップに切替）
    - スクリプトは以下の最適化を自動実行します:
-     - embeddable には `ensurepip/pip` が無いため、公式 `pip.pyz` を使って `pip/setuptools/wheel` を `Lib/site-packages` にブートストラップ
-     - pip を `--no-cache-dir --no-compile --prefer-binary --only-binary=:all:` で実行（ビルド時キャッシュ/pycを生成しない）
-     - 可能な限り wheel を採用（`--only-binary=:all:`）
+     - 可能なら uv を使用して `requirements.in` を `Lib/site-packages` にインストール（`--no-cache-dir --no-compile --prefer-binary --only-binary=:all:`）
+     - uv が無い場合は、公式 `pip.pyz` を用いて embeddable に pip をブートストラップ後、同等オプションでインストール
      - `pip/setuptools/wheel` 本体および関連 `*.dist-info` を削除（実行時に不要）
      - `tests/`, `testing/`, `__pycache__/`, `*.pyc` を削除
    - `python_dist/` に `python.exe` と必要最小の site-packages が配置されます
