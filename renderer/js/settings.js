@@ -148,9 +148,35 @@ class SettingsManager {
             </div>
         `;
         
-                this.bindRenderedEvents();
-
+        this.bindRenderedEvents();
         this.setupSettingsEventListeners();
+    }
+
+    bindRenderedEvents() {
+        const bind = (selector, handler) => {
+            if (!selector || typeof handler !== 'function') return;
+            const elements = document.querySelectorAll(selector);
+            elements.forEach((el) => {
+                el.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    handler.call(this, event);
+                });
+            });
+        };
+
+        bind('#btn-refresh-status', this.refreshSystemStatus);
+        bind('#btn-run-health', this.runSystemHealthCheck);
+        bind('#btn-view-logs', this.viewSystemLogs);
+        bind('#btn-save-general', this.saveGeneralSettings);
+        bind('#btn-reset-general', this.resetGeneralSettings);
+        bind('#btn-cleanup-data', this.cleanupData);
+        bind('#btn-reset-all', this.resetAllData);
+        bind('#btn-test-api', this.testApiKey);
+        bind('#btn-open-devtools', this.openDevTools);
+        bind('#btn-restart-app', this.restartApplication);
+        bind('#btn-view-logs-adv', this.viewSystemLogs);
+        bind('#btn-export-info-adv', this.exportSystemInfo);
+        bind('#btn-reload-settings', this.reloadSettings);
     }
 
     showToast(message, type = 'info') {
@@ -314,6 +340,14 @@ class SettingsManager {
                     </div>
                 </div>
             `;
+        }
+
+        const reloadBtn = document.getElementById('btn-reload-settings');
+        if (reloadBtn) {
+            reloadBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                this.reloadSettings();
+            });
         }
     }
     
