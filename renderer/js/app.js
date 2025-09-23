@@ -102,6 +102,22 @@ class ChainlitElectronApp {
         }
 
         for (let i = 0; i < maxRetries; i++) {
+            if (window.electronAPI?.probeChainlit) {
+                try {
+                    const probe = await window.electronAPI.probeChainlit(baseUrl);
+                    if (probe?.success) {
+                        console.log('✅ Chainlit server reachable via IPC', probe.detail);
+                        this.updateConnectionStatus('🟢 接続済み', 'システム正常稼働中');
+                        return;
+                    }
+                    if (probe?.detail) {
+                        console.debug('Chainlit IPC probe detail', probe.detail);
+                    }
+                } catch (probeError) {
+                    console.debug('Chainlit IPC probe error', probeError);
+                }
+            }
+
             const targets = [`${baseUrl}/health`, `${baseUrl}/login`, `${baseUrl}/`, baseUrl];
             for (const target of targets) {
                 try {

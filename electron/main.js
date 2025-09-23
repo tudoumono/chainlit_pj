@@ -204,6 +204,7 @@ class ChainlitIntegratedManager {
         this.chainlitUrl = `http://${chainlitHost}:${chainlitPort}`;
         this.electronApiUrl = `http://${apiHost}:${apiPort}`;
         this.mainWindow = null;
+        this.chainlitReachable = false;
     }
 
     async ensurePythonDeps() {
@@ -357,6 +358,7 @@ class ChainlitIntegratedManager {
         this.chainlitProcess.on('close', (code) => {
             this.chainlitLastExit = code;
             console.log(`🛑 Chainlit exited: ${code}`);
+            this.chainlitReachable = false;
         });
         return true;
     }
@@ -464,8 +466,48 @@ class ChainlitIntegratedManager {
             if (!electronApiReady) reasons.push('Electron API not reachable');
             throw new Error(`Failed to start Python servers (${reasons.join(', ')})`);
         }
-    
+
+        this.chainlitReachable = true;
         console.log('🎉 全サーバーの起動が完了しました');
+    }
+
+    async probeChainlit(overrideUrl) {
+        const baseInput = (overrideUrl || this.chainlitUrl || '').toString().trim();
+        if (!baseInput) {
+            return { ok: false, reason: 'missing-url' };
+        }
+        const sanitize = (url) => url.replace(/\/+$/, '');
+        const baseUrl = sanitize(baseInput);
+        const okStatuses = new Set([200, 204, 301, 302, 303, 307, 308, 401, 403, 404]);
+        const targets = [`${baseUrl}/health`, `${baseUrl}/login`, `${baseUrl}/`, baseUrl];
+        let lastError = null;
+
+        for (const target of targets) {
+            try {
+                const response = await axios.get(target, {
+                    timeout: 2500,
+                    maxRedirects: 0,
+                    validateStatus: () => true,
+                });
+                if (okStatuses.has(response.status)) {
+                    this.chainlitReachable = true;
+                    return {
+                        ok: true,
+                        target,
+                        status: response.status,
+                    };
+                }
+                lastError = { status: response.status, url: target };
+            } catch (error) {
+                lastError = {
+                    url: target,
+                    message: error?.message || String(error),
+                    code: error?.code,
+                };
+            }
+        }
+
+        return { ok: false, reason: 'probe_failed', detail: lastError };
     }
 
     async writeStartupDiagnostics() {
@@ -773,6 +815,15 @@ ipcMain.handle('return-to-settings', async () => {
 // Chainlit URL取得
 ipcMain.handle('get-chainlit-url', () => {
     return chainlitManager.chainlitUrl;
+});
+
+ipcMain.handle('probe-chainlit', async (event, overrideUrl) => {
+    try {
+        const result = await chainlitManager.probeChainlit(overrideUrl);
+        return { success: result.ok, detail: result };
+    } catch (error) {
+        return { success: false, error: String(error?.message || error) };
+    }
 });
 
 // システム情報取得

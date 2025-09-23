@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Chainlit URL取得
     getChainlitUrl: () => ipcRenderer.invoke('get-chainlit-url'),
+    probeChainlit: (overrideUrl = null) => ipcRenderer.invoke('probe-chainlit', overrideUrl),
     
     // Electron Backend API (REST)
     callAPI: (endpoint, method = 'GET', data = null) => 

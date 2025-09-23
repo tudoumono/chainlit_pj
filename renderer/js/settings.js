@@ -354,34 +354,53 @@ class SettingsManager {
                     throw new Error('Chainlit URL 未設定');
                 }
 
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 2000);
-                const okStatuses = new Set([200, 204, 301, 302, 307, 308, 401, 403, 404]);
                 let chainlitReady = false;
 
-                for (const target of [`${baseUrl}/health`, `${baseUrl}/login`, `${baseUrl}/`, baseUrl]) {
+                if (window.electronAPI?.probeChainlit) {
                     try {
-                        const response = await fetch(target, {
-                            signal: controller.signal,
-                            redirect: 'manual',
-                            credentials: 'include'
-                        });
-                        if (okStatuses.has(response.status)) {
-                            console.log('✅ Chainlit health check success', {
-                                url: target,
-                                status: response.status
-                            });
+                        const probe = await window.electronAPI.probeChainlit(baseUrl);
+                        if (probe?.success) {
+                            console.log('✅ Chainlit health via IPC', probe.detail);
+                            health['chainlit'] = { status: 'healthy', message: 'Chainlit応答OK' };
                             chainlitReady = true;
-                            break;
+                        } else if (probe?.detail) {
+                            console.debug('Chainlit IPC health detail', probe.detail);
                         }
-                    } catch (innerError) {
-                        if (innerError.name !== 'AbortError') {
-                            continue;
-                        }
+                    } catch (probeErr) {
+                        console.debug('Chainlit IPC health error', probeErr);
                     }
                 }
 
-                clearTimeout(timeout);
+                if (!chainlitReady) {
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 2000);
+                    const okStatuses = new Set([200, 204, 301, 302, 307, 308, 401, 403, 404]);
+
+                    for (const target of [`${baseUrl}/health`, `${baseUrl}/login`, `${baseUrl}/`, baseUrl]) {
+                        try {
+                            const response = await fetch(target, {
+                                signal: controller.signal,
+                                redirect: 'manual',
+                                credentials: 'include'
+                            });
+                            if (okStatuses.has(response.status)) {
+                                console.log('✅ Chainlit health check success', {
+                                    url: target,
+                                    status: response.status
+                                });
+                                chainlitReady = true;
+                                break;
+                            }
+                        } catch (innerError) {
+                            if (innerError.name !== 'AbortError') {
+                                continue;
+                            }
+                        }
+                    }
+
+                    clearTimeout(timeout);
+                }
+
                 if (!chainlitReady) {
                     throw new Error('Chainlit未応答');
                 }
