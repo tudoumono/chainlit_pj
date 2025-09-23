@@ -381,12 +381,13 @@ class ChainlitIntegratedManager {
         let cwd = installDir2;
         const apiHost = String(process.env.ELECTRON_API_HOST || '127.0.0.1');
         const apiPort = String(process.env.ELECTRON_API_PORT || '8001');
+        const apiAppDir = pythonBackendDir;
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
-            args = ['-m', 'uvicorn', 'electron_api:app', '--host', apiHost, '--port', apiPort];
+            args = ['-m', 'uvicorn', 'electron_api:app', '--host', apiHost, '--port', apiPort, '--app-dir', apiAppDir];
         } else {
             command = 'uv';
-            args = ['run', 'uvicorn', 'electron_api:app', '--host', apiHost, '--port', apiPort];
+            args = ['run', 'uvicorn', 'electron_api:app', '--host', apiHost, '--port', apiPort, '--app-dir', apiAppDir];
         }
         this.apiProcess = spawn(command, args, {
             stdio: ['pipe', 'pipe', 'pipe'],
