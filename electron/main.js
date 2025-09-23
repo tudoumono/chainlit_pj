@@ -300,6 +300,9 @@ class ChainlitIntegratedManager {
 
     async startChainlit() {
         if (this.chainlitProcess) return true;
+        const chainlitPort = String(process.env.CHAINLIT_PORT || '8000');
+        const chainlitHost = String(process.env.CHAINLIT_HOST || '127.0.0.1');
+        this.chainlitUrl = `http://${chainlitHost}:${chainlitPort}`;
         // ALWAYS_SPAWN=true の場合は検出スキップ
         if (process.env.ALWAYS_SPAWN === 'true') {
             console.log('⚙️ ALWAYS_SPAWN=true: forcing Chainlit spawn');
@@ -324,8 +327,6 @@ class ChainlitIntegratedManager {
         // DBや履歴はユーザーデータ配下に作成させる
         const { installDir, localChainlitDir } = ensureLocalEnvAndConfig();
         let cwd = installDir;
-        const chainlitPort = String(process.env.CHAINLIT_PORT || '8000');
-        const chainlitHost = String(process.env.CHAINLIT_HOST || '127.0.0.1');
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
             args = ['-m', 'chainlit', 'run', path.join(pythonBackendDir, 'app.py'), '--host', chainlitHost, '--port', chainlitPort, '--headless'];
@@ -362,6 +363,9 @@ class ChainlitIntegratedManager {
 
     async startElectronAPI() {
         if (this.apiProcess) return true;
+        const apiHost = String(process.env.ELECTRON_API_HOST || '127.0.0.1');
+        const apiPort = String(process.env.ELECTRON_API_PORT || '8001');
+        this.electronApiUrl = `http://${apiHost}:${apiPort}`;
         if (process.env.ALWAYS_SPAWN === 'true') {
             console.log('⚙️ ALWAYS_SPAWN=true: forcing Electron API spawn');
         } else {
@@ -379,8 +383,6 @@ class ChainlitIntegratedManager {
         // ユーザーデータ配下で実行（一時ファイル等の書き込み先を確保）
         const { installDir: installDir2, localChainlitDir: localChainlitDir2 } = ensureLocalEnvAndConfig();
         let cwd = installDir2;
-        const apiHost = String(process.env.ELECTRON_API_HOST || '127.0.0.1');
-        const apiPort = String(process.env.ELECTRON_API_PORT || '8001');
         const apiAppDir = pythonBackendDir;
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
