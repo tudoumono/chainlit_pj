@@ -330,11 +330,35 @@ class SettingsManager {
             // 3) Chainlit
             try {
                 const url = await window.electronAPI.getChainlitUrl();
+                const baseUrl = (url || '').replace(/\/+$/, '');
                 const controller = new AbortController();
-                const t = setTimeout(() => controller.abort(), 2000);
-                const r = await fetch(`${url}/health`, { signal: controller.signal });
-                clearTimeout(t);
-                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const timeout = setTimeout(() => controller.abort(), 2000);
+                const okStatuses = new Set([200, 204, 301, 302, 307, 308, 401, 403]);
+                let chainlitReady = false;
+
+                for (const target of [`${baseUrl}/health`, `${baseUrl}/login`, baseUrl]) {
+                    try {
+                        const response = await fetch(target, {
+                            signal: controller.signal,
+                            redirect: 'manual',
+                            credentials: 'include'
+                        });
+                        if (okStatuses.has(response.status)) {
+                            chainlitReady = true;
+                            break;
+                        }
+                    } catch (innerError) {
+                        if (innerError.name !== 'AbortError') {
+                            continue;
+                        }
+                    }
+                }
+
+                clearTimeout(timeout);
+                if (!chainlitReady) {
+                    throw new Error('Chainlit未応答');
+                }
+
                 health['chainlit'] = { status: 'healthy', message: 'Chainlit応答OK' };
             } catch (e) {
                 health['chainlit'] = { status: 'unhealthy', message: 'Chainlitに接続できません' };

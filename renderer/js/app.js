@@ -63,21 +63,40 @@ class ChainlitElectronApp {
     }
     
     async waitForChainlitServer(maxRetries = 30, delay = 1000) {
+        const okStatuses = new Set([200, 204, 301, 302, 307, 308, 401, 403]);
+        const sanitizeUrl = (url) => (url || '').replace(/\/+$/, '');
+        const baseUrl = sanitizeUrl(this.chainlitUrl);
+
+        if (!baseUrl) {
+            throw new Error('Chainlit URL が未取得です');
+        }
+
         for (let i = 0; i < maxRetries; i++) {
-            try {
-                const response = await fetch(`${this.chainlitUrl}/health`);
-                if (response.ok) {
-                    this.updateConnectionStatus('🟢 接続済み', 'システム正常稼働中');
-                    return;
+            const targets = [`${baseUrl}/health`, `${baseUrl}/login`, baseUrl];
+            for (const target of targets) {
+                try {
+                    const response = await fetch(target, {
+                        method: 'GET',
+                        redirect: 'manual',
+                        credentials: 'include'
+                    });
+                    if (okStatuses.has(response.status)) {
+                        this.updateConnectionStatus('🟢 接続済み', 'システム正常稼働中');
+                        return;
+                    }
+                } catch (error) {
+                    // ネットワーク未準備時は次の候補へ
                 }
-            } catch (error) {
-                // サーバー起動待ち
             }
-            
+
+            if (i % 5 === 0) {
+                console.warn('Chainlit probing retry', { attempt: i + 1 });
+            }
+
             this.updateLoadingMessage(`Chainlitサーバー起動待ち... (${i + 1}/${maxRetries})`);
             await new Promise(resolve => setTimeout(resolve, delay));
         }
-        
+
         throw new Error('Chainlitサーバーへの接続がタイムアウトしました');
     }
 
