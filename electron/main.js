@@ -288,8 +288,12 @@ class ChainlitIntegratedManager {
             const sitePackages = process.platform === 'win32'
                 ? path.join(pyHome, 'Lib', 'site-packages')
                 : path.join(pyHome, '..', 'lib', 'python3', 'site-packages');
-            env.PYTHONPATH = sitePackages;
+            const pythonPathParts = [sitePackages, pythonBackendDir, env.PYTHONPATH].filter(Boolean);
+            env.PYTHONPATH = pythonPathParts.join(path.delimiter);
             env.PATH = `${pyHome}${path.delimiter}${process.env.PATH || ''}`;
+        } else {
+            const pythonPathParts = [pythonBackendDir, env.PYTHONPATH].filter(Boolean);
+            env.PYTHONPATH = pythonPathParts.join(path.delimiter);
         }
         return { ...env, ...extra };
     }
@@ -375,12 +379,14 @@ class ChainlitIntegratedManager {
         // ユーザーデータ配下で実行（一時ファイル等の書き込み先を確保）
         const { installDir: installDir2, localChainlitDir: localChainlitDir2 } = ensureLocalEnvAndConfig();
         let cwd = installDir2;
+        const apiHost = String(process.env.ELECTRON_API_HOST || '127.0.0.1');
+        const apiPort = String(process.env.ELECTRON_API_PORT || '8001');
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
-            args = [path.join(pythonBackendDir, 'electron_api.py')];
+            args = ['-m', 'uvicorn', 'electron_api:app', '--host', apiHost, '--port', apiPort];
         } else {
             command = 'uv';
-            args = ['run', 'python', path.join(baseDir, 'electron_api.py')];
+            args = ['run', 'uvicorn', 'electron_api:app', '--host', apiHost, '--port', apiPort];
         }
         this.apiProcess = spawn(command, args, {
             stdio: ['pipe', 'pipe', 'pipe'],

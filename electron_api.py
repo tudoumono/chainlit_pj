@@ -209,7 +209,6 @@ async def export_system_info():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post('/api/system/test-openai-key')
 async def test_openai_key(request: Dict[str, Any]):
     """OpenAI APIキー疎通テスト（既存キー使用が基本）。"""
@@ -1018,3 +1017,13 @@ async def get_system_logs():
         return {"status": "success", "data": {"logs": logs}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    """スタンドアロン実行時のエントリーポイント（Uvicornサーバーを起動）。"""
+    import uvicorn
+
+    host = os.environ.get("ELECTRON_API_HOST", "127.0.0.1")
+    port = int(os.environ.get("ELECTRON_API_PORT", "8001"))
+    log_level = os.environ.get("UVICORN_LOG_LEVEL", "info")
+
+    uvicorn.run(app, host=host, port=port, reload=False, log_level=log_level)
