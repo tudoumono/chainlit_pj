@@ -3,6 +3,25 @@
  * アプリケーション設定とシステム監視
  */
 
+const normalizeChainlitUrl = (url) => {
+    if (!url) return '';
+    const trimmed = String(url).trim();
+    if (!trimmed) return '';
+    try {
+        const parsed = new URL(trimmed);
+        return parsed.origin;
+    } catch (error) {
+        try {
+            const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed.replace(/^\/+/, '')}`;
+            const parsed = new URL(withProtocol);
+            return parsed.origin;
+        } catch (innerError) {
+            const fallback = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed.replace(/^\/+/, '')}`;
+            return fallback.replace(/\/+$/, '');
+        }
+    }
+};
+
 class SettingsManager {
     constructor() {
         this.settings = {};
@@ -330,13 +349,17 @@ class SettingsManager {
             // 3) Chainlit
             try {
                 const url = await window.electronAPI.getChainlitUrl();
-                const baseUrl = (url || '').replace(/\/+$/, '');
+                const baseUrl = normalizeChainlitUrl(url);
+                if (!baseUrl) {
+                    throw new Error('Chainlit URL 未設定');
+                }
+
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), 2000);
-                const okStatuses = new Set([200, 204, 301, 302, 307, 308, 401, 403]);
+                const okStatuses = new Set([200, 204, 301, 302, 307, 308, 401, 403, 404]);
                 let chainlitReady = false;
 
-                for (const target of [`${baseUrl}/health`, `${baseUrl}/login`, baseUrl]) {
+                for (const target of [`${baseUrl}/health`, `${baseUrl}/login`, `${baseUrl}/`, baseUrl]) {
                     try {
                         const response = await fetch(target, {
                             signal: controller.signal,
@@ -344,6 +367,10 @@ class SettingsManager {
                             credentials: 'include'
                         });
                         if (okStatuses.has(response.status)) {
+                            console.log('✅ Chainlit health check success', {
+                                url: target,
+                                status: response.status
+                            });
                             chainlitReady = true;
                             break;
                         }

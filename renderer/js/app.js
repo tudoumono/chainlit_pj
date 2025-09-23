@@ -3,6 +3,25 @@
  * Electron統合とChainlit連携
  */
 
+const normalizeChainlitUrl = (url) => {
+    if (!url) return '';
+    const trimmed = String(url).trim();
+    if (!trimmed) return '';
+    try {
+        const parsed = new URL(trimmed);
+        return parsed.origin;
+    } catch (error) {
+        try {
+            const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed.replace(/^\/+/, '')}`;
+            const parsed = new URL(withProtocol);
+            return parsed.origin;
+        } catch (innerError) {
+            const fallback = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed.replace(/^\/+/, '')}`;
+            return fallback.replace(/\/+$/, '');
+        }
+    }
+};
+
 class ChainlitElectronApp {
     constructor() {
         this.chainlitUrl = null;
@@ -36,8 +55,9 @@ class ChainlitElectronApp {
             
             // Chainlit URLの取得とヘルスチェック
             this.updateLoadingMessage('Chainlitサーバーへの接続確認中...');
-            this.chainlitUrl = await window.electronAPI.getChainlitUrl();
-            
+            this.chainlitUrl = await this.resolveChainlitUrl();
+            console.log('🔗 Chainlit base URL resolved:', this.chainlitUrl);
+
             // サーバー起動待ち
             await this.waitForChainlitServer();
             
@@ -62,17 +82,27 @@ class ChainlitElectronApp {
         }
     }
     
+    async resolveChainlitUrl() {
+        const rawUrl = await window.electronAPI.getChainlitUrl();
+        console.log('ℹ️ Chainlit URL (raw):', rawUrl);
+        const normalized = normalizeChainlitUrl(rawUrl);
+        if (!normalized) {
+            throw new Error('Chainlit URL が取得できませんでした');
+        }
+        console.log('ℹ️ Chainlit URL (normalized):', normalized);
+        return normalized;
+    }
+
     async waitForChainlitServer(maxRetries = 30, delay = 1000) {
-        const okStatuses = new Set([200, 204, 301, 302, 307, 308, 401, 403]);
-        const sanitizeUrl = (url) => (url || '').replace(/\/+$/, '');
-        const baseUrl = sanitizeUrl(this.chainlitUrl);
+        const okStatuses = new Set([200, 204, 301, 302, 307, 308, 401, 403, 404]);
+        const baseUrl = normalizeChainlitUrl(this.chainlitUrl);
 
         if (!baseUrl) {
             throw new Error('Chainlit URL が未取得です');
         }
 
         for (let i = 0; i < maxRetries; i++) {
-            const targets = [`${baseUrl}/health`, `${baseUrl}/login`, baseUrl];
+            const targets = [`${baseUrl}/health`, `${baseUrl}/login`, `${baseUrl}/`, baseUrl];
             for (const target of targets) {
                 try {
                     const response = await fetch(target, {
@@ -81,11 +111,21 @@ class ChainlitElectronApp {
                         credentials: 'include'
                     });
                     if (okStatuses.has(response.status)) {
+                        console.log('✅ Chainlit server responding', {
+                            url: target,
+                            status: response.status,
+                            statusText: response.statusText
+                        });
                         this.updateConnectionStatus('🟢 接続済み', 'システム正常稼働中');
                         return;
                     }
+                    console.debug('Chainlit probe response', {
+                        url: target,
+                        status: response.status,
+                        statusText: response.statusText
+                    });
                 } catch (error) {
-                    // ネットワーク未準備時は次の候補へ
+                    console.debug('Chainlit probe error', { url: target, error });
                 }
             }
 
@@ -186,7 +226,7 @@ class ChainlitElectronApp {
         if (!this.chainlitFrame || !this.chainlitUrl) return;
         
         // Chainlit URLを設定
-        this.chainlitFrame.src = this.chainlitUrl;
+        this.chainlitFrame.src = `${this.chainlitUrl}/`;
         
         // フレーム読み込み完了処理
         this.chainlitFrame.onload = () => {
@@ -308,7 +348,7 @@ class ChainlitElectronApp {
     
     async refreshChainlitFrame() {
         if (this.chainlitFrame && this.chainlitUrl) {
-            this.chainlitFrame.src = this.chainlitUrl;
+            this.chainlitFrame.src = `${this.chainlitUrl}/`;
             this.updateConnectionStatus('🔄 再接続中...', 'Chainlitを再読み込み中');
         }
     }
