@@ -3,7 +3,7 @@
  * アプリケーション設定とシステム監視
  */
 
-const normalizeChainlitUrl = (url) => {
+const normalizeChainlitUrlSafe = window.normalizeChainlitUrl || ((url) => {
     if (!url) return '';
     const trimmed = String(url).trim();
     if (!trimmed) return '';
@@ -20,7 +20,7 @@ const normalizeChainlitUrl = (url) => {
             return fallback.replace(/\/+$/, '');
         }
     }
-};
+});
 
 class SettingsManager {
     constructor() {
@@ -349,7 +349,7 @@ class SettingsManager {
             // 3) Chainlit
             try {
                 const url = await window.electronAPI.getChainlitUrl();
-                const baseUrl = normalizeChainlitUrl(url);
+                const baseUrl = normalizeChainlitUrlSafe(url);
                 if (!baseUrl) {
                     throw new Error('Chainlit URL 未設定');
                 }

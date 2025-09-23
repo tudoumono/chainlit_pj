@@ -3,7 +3,7 @@
  * Electron統合とChainlit連携
  */
 
-const normalizeChainlitUrl = (url) => {
+function normalizeChainlitUrl(url) {
     if (!url) return '';
     const trimmed = String(url).trim();
     if (!trimmed) return '';
@@ -20,7 +20,9 @@ const normalizeChainlitUrl = (url) => {
             return fallback.replace(/\/+$/, '');
         }
     }
-};
+}
+
+window.normalizeChainlitUrl = normalizeChainlitUrl;
 
 class ChainlitElectronApp {
     constructor() {
