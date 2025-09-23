@@ -324,10 +324,10 @@ class ChainlitIntegratedManager {
         const chainlitHost = String(process.env.CHAINLIT_HOST || '127.0.0.1');
         if (app.isPackaged && pythonDist) {
             command = pythonDist;
-            args = ['-m', 'chainlit', 'run', path.join(pythonBackendDir, 'app.py'), '--host', chainlitHost, '--port', chainlitPort];
+            args = ['-m', 'chainlit', 'run', path.join(pythonBackendDir, 'app.py'), '--host', chainlitHost, '--port', chainlitPort, '--headless'];
         } else {
             command = 'uv';
-            args = ['run', 'chainlit', 'run', path.join(baseDir, 'app.py'), '--host', chainlitHost, '--port', chainlitPort];
+            args = ['run', 'chainlit', 'run', path.join(baseDir, 'app.py'), '--host', chainlitHost, '--port', chainlitPort, '--headless'];
         }
         this.chainlitProcess = spawn(command, args, {
             stdio: ['pipe', 'pipe', 'pipe'],

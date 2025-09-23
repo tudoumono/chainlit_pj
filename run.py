@@ -43,11 +43,11 @@ def main():
     
     # Chainlitの起動
     print("📡 サーバーを起動中...")
-    print("🌐 ブラウザで http://localhost:8000 を開いてください")
+    print("🌐 http://127.0.0.1:8000 で待機（自動起動なし）")
     print("-" * 60)
     
     # chainlit runコマンドを実行
-    os.system("chainlit run app.py")
+    os.system("chainlit run app.py --host 127.0.0.1 --port 8000 --headless")
     
     return 0
 

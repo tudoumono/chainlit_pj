@@ -5,6 +5,7 @@ Chainlitアプリケーション用のログシステム
 
 import logging
 import sys
+import io
 from datetime import datetime
 from pathlib import Path
 import os
@@ -32,8 +33,19 @@ class ChainlitLogger:
         # 既存のハンドラーをクリア
         self.logger.handlers.clear()
         
-        # コンソールハンドラーを追加
-        console_handler = logging.StreamHandler(sys.stdout)
+        # コンソールハンドラーを追加（Windows配布環境での cp932 問題を回避）
+        # 明示的に UTF-8 へラップし、絵文字/拡張文字でも落ちないよう errors='replace'
+        try:
+            if hasattr(sys.stdout, "buffer"):
+                stdout_utf8 = io.TextIOWrapper(
+                    sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
+                )
+                console_handler = logging.StreamHandler(stdout_utf8)
+            else:
+                console_handler = logging.StreamHandler(sys.stdout)
+        except Exception:
+            # 何かあっても標準のストリームで継続
+            console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.DEBUG)
         console_handler.setFormatter(self.formatter)
         self.logger.addHandler(console_handler)
